@@ -113,10 +113,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JrHandler> JrConnection<OB, IB, H> {
     }
 
     /// Invoke the given closure when a request is received.
-    pub fn on_receive_request<R, F>(
-        self,
-        op: F,
-    ) -> JrConnection<OB, IB, ChainHandler<H, RequestHandler<R, F>>>
+    pub fn on_receive_request<R, F>(self, op: F) -> JrConnection<OB, IB, impl JrHandler>
     where
         R: JsonRpcRequest,
         F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
@@ -134,10 +131,7 @@ impl<OB: AsyncWrite, IB: AsyncRead, H: JrHandler> JrConnection<OB, IB, H> {
     }
 
     /// Invoke the given closure when a notification is received.
-    pub fn on_receive_notification<N, F>(
-        self,
-        op: F,
-    ) -> JrConnection<OB, IB, ChainHandler<H, NotificationHandler<N, F>>>
+    pub fn on_receive_notification<N, F>(self, op: F) -> JrConnection<OB, IB, impl JrHandler>
     where
         N: JrNotification,
         F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
