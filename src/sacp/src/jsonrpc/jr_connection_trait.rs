@@ -74,6 +74,12 @@ pub trait JrConnectionTrait: Sized {
         N: JrNotification,
         F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), Error>;
 
+    /// Add a new [`JrHandler`] to the chain.
+    ///
+    /// Prefer [`Self::on_receive_request`] or [`Self::on_receive_notification`].
+    /// This is a low-level method that is not intended for general use.
+    fn chain_handler<H1: JrHandler>(self, handler: H1) -> impl JrConnectionTrait;
+
     /// Returns a [`JrConnectionCx`] that allows you to send requests over the connection.
     fn connection_cx(&self) -> JrConnectionCx;
 
@@ -133,6 +139,10 @@ where
         F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), Error>,
     {
         JrConnection::on_receive_message(self, op)
+    }
+
+    fn chain_handler<H1: JrHandler>(self, handler: H1) -> impl JrConnectionTrait {
+        JrConnection::chain_handler(self, handler)
     }
 
     fn connection_cx(&self) -> JrConnectionCx {

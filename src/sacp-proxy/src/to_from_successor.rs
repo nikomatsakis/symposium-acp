@@ -1,8 +1,7 @@
-use futures::{AsyncRead, AsyncWrite};
 use sacp::{
-    ChainHandler, Handled, InitializeRequest, InitializeResponse, JrConnection, JrConnectionCx,
-    JrHandler, JrMessage, JrNotification, JrRequest, JrRequestCx, MessageAndCx, MetaCapabilityExt,
-    Proxy, UntypedMessage,
+    Handled, InitializeRequest, InitializeResponse, JrConnectionCx, JrConnectionTrait, JrHandler,
+    JrMessage, JrNotification, JrRequest, JrRequestCx, MessageAndCx, MetaCapabilityExt, Proxy,
+    UntypedMessage,
 };
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
@@ -124,7 +123,7 @@ impl<Req: JrNotification> JrNotification for SuccessorNotification<Req> {}
 // ============================================================
 
 /// Extension trait for JrConnection that adds proxy-specific functionality
-pub trait AcpProxyExt<OB: AsyncWrite, IB: AsyncRead, H: JrHandler> {
+pub trait AcpProxyExt: Sized {
     /// Adds a handler for requests received from the successor component.
     ///
     /// The provided handler will receive unwrapped ACP messages - the
@@ -147,10 +146,7 @@ pub trait AcpProxyExt<OB: AsyncWrite, IB: AsyncRead, H: JrHandler> {
     /// # Ok(())
     /// # }
     /// ```
-    fn on_receive_request_from_successor<R, F>(
-        self,
-        op: F,
-    ) -> JrConnection<OB, IB, ChainHandler<H, RequestFromSuccessorHandler<R, F>>>
+    fn on_receive_request_from_successor<R, F>(self, op: F) -> impl JrConnectionTrait
     where
         R: JrRequest,
         F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), sacp::Error>;
@@ -177,37 +173,26 @@ pub trait AcpProxyExt<OB: AsyncWrite, IB: AsyncRead, H: JrHandler> {
     /// # Ok(())
     /// # }
     /// ```
-    fn on_receive_notification_from_successor<N, F>(
-        self,
-        op: F,
-    ) -> JrConnection<OB, IB, ChainHandler<H, NotificationFromSuccessorHandler<N, F>>>
+    fn on_receive_notification_from_successor<N, F>(self, op: F) -> impl JrConnectionTrait
     where
         N: JrNotification,
         F: AsyncFnMut(N, JrConnectionCx) -> Result<(), sacp::Error>;
 
     /// Installs a proxy layer that proxies all requests/notifications to/from the successor.
     /// This is typically the last component in the chain.
-    fn proxy(self) -> JrConnection<OB, IB, ChainHandler<H, ProxyHandler>>;
+    fn proxy(self) -> impl JrConnectionTrait;
 
     /// Provide MCP servers to downstream successors.
     /// This layer will modify `session/new` requests to include those MCP servers
     /// (unless you intercept them earlier).
-    fn provide_mcp(
-        self,
-        registry: impl AsRef<McpServiceRegistry>,
-    ) -> JrConnection<OB, IB, ChainHandler<H, McpServiceRegistry>>;
+    fn provide_mcp(self, registry: impl AsRef<McpServiceRegistry>) -> impl JrConnectionTrait;
 }
 
-impl<OB, IB, H> AcpProxyExt<OB, IB, H> for JrConnection<OB, IB, H>
+impl<T> AcpProxyExt for T
 where
-    OB: AsyncWrite,
-    IB: AsyncRead,
-    H: JrHandler,
+    T: JrConnectionTrait,
 {
-    fn on_receive_request_from_successor<R, F>(
-        self,
-        op: F,
-    ) -> JrConnection<OB, IB, ChainHandler<H, RequestFromSuccessorHandler<R, F>>>
+    fn on_receive_request_from_successor<R, F>(self, op: F) -> impl JrConnectionTrait
     where
         R: JrRequest,
         F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), sacp::Error>,
@@ -215,10 +200,7 @@ where
         self.chain_handler(RequestFromSuccessorHandler::new(op))
     }
 
-    fn on_receive_notification_from_successor<N, F>(
-        self,
-        op: F,
-    ) -> JrConnection<OB, IB, ChainHandler<H, NotificationFromSuccessorHandler<N, F>>>
+    fn on_receive_notification_from_successor<N, F>(self, op: F) -> impl JrConnectionTrait
     where
         N: JrNotification,
         F: AsyncFnMut(N, JrConnectionCx) -> Result<(), sacp::Error>,
@@ -226,14 +208,11 @@ where
         self.chain_handler(NotificationFromSuccessorHandler::new(op))
     }
 
-    fn proxy(self) -> JrConnection<OB, IB, ChainHandler<H, ProxyHandler>> {
+    fn proxy(self) -> impl JrConnectionTrait {
         self.chain_handler(ProxyHandler {})
     }
 
-    fn provide_mcp(
-        self,
-        registry: impl AsRef<McpServiceRegistry>,
-    ) -> JrConnection<OB, IB, ChainHandler<H, McpServiceRegistry>> {
+    fn provide_mcp(self, registry: impl AsRef<McpServiceRegistry>) -> impl JrConnectionTrait {
         self.chain_handler(registry.as_ref().clone())
     }
 }

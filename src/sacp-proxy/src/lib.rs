@@ -24,13 +24,13 @@
 //! The simplest proxy just forwards messages unchanged:
 //!
 //! ```rust,no_run
-//! use sacp::JrConnection;
+//! use sacp::JrConnectionTrait;
 //! use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
 //! use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! JrConnection::new(
+//! sacp::new_connection(
 //!     tokio::io::stdout().compat_write(),
 //!     tokio::io::stdin().compat()
 //! )
@@ -46,13 +46,13 @@
 //! To add MCP tools to the proxy, provide an MCP server:
 //!
 //! ```rust,no_run
-//! use sacp::JrConnection;
+//! use sacp::JrConnectionTrait;
 //! use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
 //! use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! JrConnection::new(
+//! sacp::new_connection(
 //!     tokio::io::stdout().compat_write(),
 //!     tokio::io::stdin().compat()
 //! )
