@@ -12,7 +12,9 @@ use futures::{AsyncRead, AsyncWrite, FutureExt};
 
 mod actors;
 mod handlers;
+mod jr_connection_trait;
 pub use handlers::*;
+pub use jr_connection_trait::*;
 
 use crate::jsonrpc::actors::Task;
 
@@ -1532,7 +1534,7 @@ impl<R: JrResponsePayload> JrResponse<R> {
     /// # use sacp_doc_test::*;
     /// # async fn example() -> Result<(), sacp::Error> {
     /// # let connection = mock_connection();
-    /// # let other_connection = connection.json_rpc_cx();
+    /// # let other_connection = connection.connection_cx();
     /// connection.on_receive_request(async |req: ProxyRequest, request_cx| {
     ///     // Forward the request to another connection and proxy the response back
     ///     other_connection.send_request(req.inner_request)
