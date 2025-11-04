@@ -3,6 +3,43 @@
 use crate::*;
 use futures::{AsyncRead, AsyncWrite};
 
+/// Create a new JrConnection from output and input streams.
+///
+/// This is a convenience function that returns `impl JrConnectionTrait`, allowing
+/// users to work with connections without naming concrete types.
+///
+/// # Example
+///
+/// ```no_run
+/// # use sacp::{new_connection, JrConnectionTrait, AgentCapabilities};
+/// # use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
+/// # async fn example() -> Result<(), sacp::Error> {
+/// new_connection(
+///     tokio::io::stdout().compat_write(),
+///     tokio::io::stdin().compat(),
+/// )
+/// .name("my-agent")
+/// .on_receive_request(async |req: sacp::InitializeRequest, cx| {
+///     cx.respond(sacp::InitializeResponse {
+///         protocol_version: req.protocol_version,
+///         agent_capabilities: AgentCapabilities::default(),
+///         auth_methods: Default::default(),
+///         agent_info: Default::default(),
+///         meta: Default::default(),
+///     })
+/// })
+/// .serve()
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn new_connection(
+    outgoing_bytes: impl AsyncWrite + 'static,
+    incoming_bytes: impl AsyncRead + 'static,
+) -> impl JrConnectionTrait {
+    JrConnection::new(outgoing_bytes, incoming_bytes)
+}
+
 /// Trait interface for `JrConnection` that hides type parameters behind `impl Trait`.
 ///
 /// This allows users to work with connections without naming the concrete types

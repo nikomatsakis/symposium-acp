@@ -41,9 +41,9 @@ use clap::Parser;
 use eliza::Eliza;
 use sacp::{
     AgentCapabilities, ContentBlock, ContentChunk, InitializeRequest, InitializeResponse,
-    JrConnection, LoadSessionRequest, LoadSessionResponse, NewSessionRequest, NewSessionResponse,
-    PromptRequest, PromptResponse, SessionId, SessionNotification, SessionUpdate, StopReason,
-    TextContent,
+    JrConnectionTrait, LoadSessionRequest, LoadSessionResponse, NewSessionRequest,
+    NewSessionResponse, PromptRequest, PromptResponse, SessionId, SessionNotification,
+    SessionUpdate, StopReason, TextContent,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
     let agent = ElizaAgent::new();
 
     // Set up JSON-RPC connection over stdio
-    JrConnection::new(stdout().compat_write(), stdin().compat())
+    sacp::new_connection(stdout().compat_write(), stdin().compat())
         .name("elizacp")
         .on_receive_request({
             async |initialize: InitializeRequest, request_cx| {
