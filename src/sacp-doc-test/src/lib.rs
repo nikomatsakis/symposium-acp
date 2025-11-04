@@ -240,15 +240,11 @@ pub fn process(data: &str) -> Result<String, crate::Error> {
 }
 
 // Helper to create a mock connection for examples
-pub fn mock_connection() -> JrConnection<
-    Pin<Box<dyn futures::AsyncWrite + Send>>,
-    Pin<Box<dyn futures::AsyncRead + Send>>,
-    NullHandler,
-> {
+pub fn mock_connection() -> impl JrConnectionTrait {
     use futures::io::Cursor;
     let writer: Pin<Box<dyn futures::AsyncWrite + Send>> = Box::pin(Cursor::new(Vec::new()));
     let reader: Pin<Box<dyn futures::AsyncRead + Send>> = Box::pin(Cursor::new(Vec::new()));
-    JrConnection::new(writer, reader)
+    new_connection(writer, reader)
 }
 
 pub trait Make {

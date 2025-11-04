@@ -10,13 +10,13 @@
 //! Building an ACP agent is straightforward with sacp's type-safe API:
 //!
 //! ```no_run
-//! use sacp::{JrConnection, InitializeRequest, InitializeResponse, AgentCapabilities, MessageAndCx, UntypedMessage};
+//! use sacp::{new_connection, JrConnectionTrait, InitializeRequest, InitializeResponse, AgentCapabilities, MessageAndCx, UntypedMessage};
 //! use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), sacp::Error> {
 //! // Start by creating an agent talking on stdout/stdin
-//! JrConnection::new(
+//! new_connection(
 //!     tokio::io::stdout().compat_write(),
 //!     tokio::io::stdin().compat(),
 //! )
@@ -44,7 +44,7 @@
 //!
 //! ## Learning more
 //!
-//! You can learn more in the [docs for `JrConnection`](crate::JrConnection) or on our
+//! You can learn more in the [docs for `JrConnectionTrait`](crate::JrConnectionTrait) or on our
 //! [GitHub Pages](https://github.com/symposium-acp/symposium-acp) site.
 //!
 //! You may also enjoy looking at some of these examples:

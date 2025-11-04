@@ -21,11 +21,11 @@
 //! ```
 
 use sacp::{
-    ContentBlock, InitializeRequest, JrConnection, NewSessionRequest, PromptRequest,
+    ContentBlock, InitializeRequest, JrConnectionTrait, NewSessionRequest, PromptRequest,
     RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SessionNotification, TextContent, VERSION as PROTOCOL_VERSION,
 };
-use sacp_tokio::{AcpAgent, JrConnectionExt};
+use sacp_tokio::AcpAgent;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -57,7 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("🚀 Spawning agent and connecting...");
 
     // Run the client
-    JrConnection::to_agent(agent)?
+    agent
+        .connection()?
         .on_receive_notification(async move |notification: SessionNotification, _cx| {
             // Print session updates to stdout (so 2>/dev/null shows only agent output)
             println!("{:?}", notification.update);

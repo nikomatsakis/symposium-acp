@@ -5,7 +5,7 @@ use fxhash::FxHashMap;
 use rmcp::ServiceExt;
 use sacp::NewSessionRequest;
 use sacp::{
-    Handled, JrConnection, JrConnectionCx, JrHandler, JrMessage, JrRequestCx, MessageAndCx,
+    Handled, JrConnectionCx, JrConnectionTrait, JrHandler, JrMessage, JrRequestCx, MessageAndCx,
     UntypedMessage,
 };
 use std::pin::Pin;
@@ -25,7 +25,7 @@ use crate::{
 ///
 /// # Handling requests
 ///
-/// You must add the registery (or a clone of it) to the [`JrConnection`] so that it can intercept MCP requests.
+/// You must add the registery (or a clone of it) to the connection so that it can intercept MCP requests.
 /// Typically you do this by providing it as an argument to the [`]
 #[derive(Clone, Default, Debug)]
 pub struct McpServiceRegistry {
@@ -230,7 +230,7 @@ impl McpServiceRegistry {
         // send to the MCP server.
         let spawn_results = request_cx
             .spawn(
-                JrConnection::new(mcp_client_write.compat_write(), mcp_client_read.compat())
+                sacp::new_connection(mcp_client_write.compat_write(), mcp_client_read.compat())
                     .on_receive_message({
                         let connection_id = connection_id.clone();
                         let outer_cx = request_cx.connection_cx();

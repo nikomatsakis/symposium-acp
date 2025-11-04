@@ -306,7 +306,7 @@ use crate::jsonrpc::actors::Task;
 /// # }
 /// ```
 #[must_use]
-pub struct JrConnection<OB: AsyncWrite, IB: AsyncRead, H: JrHandler> {
+pub(crate) struct JrConnection<OB: AsyncWrite, IB: AsyncRead, H: JrHandler> {
     name: Option<String>,
 
     /// Where to send bytes to communicate to the other side
