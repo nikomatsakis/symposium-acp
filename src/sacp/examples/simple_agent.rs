@@ -1,12 +1,11 @@
 use sacp::{
-    AgentCapabilities, InitializeRequest, InitializeResponse, JrConnection, MessageAndCx,
-    UntypedMessage,
+    AgentCapabilities, InitializeRequest, InitializeResponse, MessageAndCx, UntypedMessage,
 };
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[tokio::main]
 async fn main() -> Result<(), sacp::Error> {
-    JrConnection::new(
+    sacp::JrConnection::new(
         tokio::io::stdout().compat_write(),
         tokio::io::stdin().compat(),
     )
