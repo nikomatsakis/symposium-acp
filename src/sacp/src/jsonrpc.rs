@@ -8,18 +8,24 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::panic::Location;
 use std::pin::pin;
+use uuid::Uuid;
 
 use boxfnonce::SendBoxFnOnce;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Either};
 use futures::{AsyncRead, AsyncWrite, FutureExt, StreamExt};
 
-mod actors;
+mod dynamic_handler;
 pub(crate) mod handlers;
+mod incoming_actor;
+mod outgoing_actor;
+mod reply_actor;
 mod task_actor;
+mod transport_actor;
 
 use crate::Component;
 use crate::handler::{ChainedHandler, NamedHandler};
+use crate::jsonrpc::dynamic_handler::DynamicHandlerMessage;
 use crate::jsonrpc::handlers::{MessageHandler, NotificationHandler, NullHandler, RequestHandler};
 use crate::jsonrpc::task_actor::{PendingTask, Task};
 
@@ -53,6 +59,34 @@ pub trait JrMessageHandler {
 
     /// Returns a debug description of the handler chain for diagnostics
     fn describe_chain(&self) -> impl std::fmt::Debug;
+}
+
+/// A version of [`JrMessageHandler`] where the `handle_message` code is required to be `Send`;
+/// any type implementing this trait must also implement [`JrMessageHandler`].
+///
+/// If you are implementing [`JrMessageHandler`] explicitly, as opposed to using helper
+/// methods like [`JrHandlerChain::on_receive_message`], then it is better to implement this Send trait
+/// when possible.
+pub trait JrMessageHandlerSend: Send {
+    fn handle_message(
+        &mut self,
+        message: MessageAndCx,
+    ) -> impl Future<Output = Result<Handled<MessageAndCx>, crate::Error>> + Send;
+
+    fn describe_chain(&self) -> impl std::fmt::Debug;
+}
+
+impl<H: JrMessageHandlerSend> JrMessageHandler for H {
+    async fn handle_message(
+        &mut self,
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, crate::Error> {
+        JrMessageHandlerSend::handle_message(self, message).await
+    }
+
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        JrMessageHandlerSend::describe_chain(self)
+    }
 }
 
 /// A JSON-RPC connection that can act as either a server, client, or both.
@@ -602,7 +636,8 @@ impl<H: JrMessageHandler> JrHandlerChain<H> {
 
         let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
         let (new_task_tx, new_task_rx) = mpsc::unbounded();
-        let cx = JrConnectionCx::new(outgoing_tx, new_task_tx);
+        let (dynamic_handler_tx, dynamic_handler_rx) = mpsc::unbounded();
+        let cx = JrConnectionCx::new(outgoing_tx, new_task_tx, dynamic_handler_tx);
 
         // Convert transport into server - this returns a channel for us to use
         // and a future that runs the transport
@@ -629,6 +664,7 @@ impl<H: JrMessageHandler> JrHandlerChain<H> {
             new_task_rx,
             transport_outgoing_tx,
             transport_incoming_rx,
+            dynamic_handler_rx,
             handler,
         })
     }
@@ -755,6 +791,7 @@ pub struct JrConnection<H: JrMessageHandler> {
     new_task_rx: mpsc::UnboundedReceiver<Task>,
     transport_outgoing_tx: mpsc::UnboundedSender<Result<jsonrpcmsg::Message, crate::Error>>,
     transport_incoming_rx: mpsc::UnboundedReceiver<Result<jsonrpcmsg::Message, crate::Error>>,
+    dynamic_handler_rx: mpsc::UnboundedReceiver<DynamicHandlerMessage>,
     handler: H,
 }
 
@@ -873,13 +910,14 @@ impl<H: JrMessageHandler> JrConnection<H> {
             handler,
             transport_outgoing_tx,
             transport_incoming_rx,
+            dynamic_handler_rx,
         } = self;
         let (reply_tx, reply_rx) = mpsc::unbounded();
 
         crate::util::instrument_with_connection_name(name, async move {
             futures::select!(
                 // Protocol layer: OutgoingMessage → jsonrpcmsg::Message
-                r = actors::outgoing_protocol_actor(
+                r = outgoing_actor::outgoing_protocol_actor(
                     outgoing_rx,
                     reply_tx.clone(),
                     transport_outgoing_tx,
@@ -888,16 +926,17 @@ impl<H: JrMessageHandler> JrConnection<H> {
                     r?;
                 }
                 // Protocol layer: jsonrpcmsg::Message → handler/reply routing
-                r = actors::incoming_protocol_actor(
+                r = incoming_actor::incoming_protocol_actor(
                     &cx,
                     transport_incoming_rx,
-                    reply_tx,
+                    dynamic_handler_rx,
+                    reply_tx.clone(),
                     handler,
                 ).fuse() => {
                     tracing::trace!(?r, "incoming protocol actor terminated");
                     r?;
                 }
-                r = actors::reply_actor(reply_rx).fuse() => {
+                r = reply_actor::reply_actor(reply_rx).fuse() => {
                     tracing::trace!(?r, "reply actor terminated");
                     r?;
                 }
@@ -1033,16 +1072,19 @@ impl<T> IntoHandled<T> for Handled<T> {
 pub struct JrConnectionCx {
     message_tx: mpsc::UnboundedSender<OutgoingMessage>,
     task_tx: mpsc::UnboundedSender<Task>,
+    dynamic_handler_tx: mpsc::UnboundedSender<DynamicHandlerMessage>,
 }
 
 impl JrConnectionCx {
     fn new(
-        tx: mpsc::UnboundedSender<OutgoingMessage>,
+        message_tx: mpsc::UnboundedSender<OutgoingMessage>,
         task_tx: mpsc::UnboundedSender<Task>,
+        dynamic_handler_tx: mpsc::UnboundedSender<DynamicHandlerMessage>,
     ) -> Self {
         Self {
-            message_tx: tx,
+            message_tx,
             task_tx,
+            dynamic_handler_tx,
         }
     }
 
@@ -1303,6 +1345,57 @@ impl JrConnectionCx {
         self.message_tx
             .unbounded_send(message)
             .map_err(communication_failure)
+    }
+
+    /// Register a dynamic message handler, used to intercept messages specific to a particular session
+    /// or some similar modal thing.
+    ///
+    /// Dynamic message handlers are called first for every incoming message.
+    ///
+    /// If they decline to handle the message, then the message is passed to the regular handler chain.
+    ///
+    /// The handler will stay registered until the [`DynamicHandlerRegistration`] is dropped.
+    pub fn add_dynamic_handler(
+        &self,
+        handler: impl JrMessageHandlerSend + 'static,
+    ) -> Result<DynamicHandlerRegistration, crate::Error> {
+        let uuid = Uuid::new_v4();
+        self.dynamic_handler_tx
+            .unbounded_send(DynamicHandlerMessage::AddDynamicHandler(
+                uuid.clone(),
+                Box::new(handler),
+            ))
+            .map_err(communication_failure)?;
+
+        Ok(DynamicHandlerRegistration::new(uuid, self.clone()))
+    }
+
+    fn remove_dynamic_handler(&self, uuid: Uuid) {
+        match self
+            .dynamic_handler_tx
+            .unbounded_send(DynamicHandlerMessage::RemoveDynamicHandler(uuid))
+        {
+            Ok(_) => (),
+            Err(_) => ( /* ignore errors */),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DynamicHandlerRegistration {
+    uuid: Uuid,
+    cx: JrConnectionCx,
+}
+
+impl DynamicHandlerRegistration {
+    fn new(uuid: Uuid, cx: JrConnectionCx) -> Self {
+        Self { uuid, cx }
+    }
+}
+
+impl Drop for DynamicHandlerRegistration {
+    fn drop(&mut self) {
+        self.cx.remove_dynamic_handler(self.uuid.clone());
     }
 }
 
@@ -2175,8 +2268,8 @@ where
             let Channel { rx, tx } = channel_for_lines;
 
             // Run both actors concurrently
-            let outgoing_future = actors::transport_outgoing_lines_actor(rx, outgoing);
-            let incoming_future = actors::transport_incoming_lines_actor(incoming, tx);
+            let outgoing_future = transport_actor::transport_outgoing_lines_actor(rx, outgoing);
+            let incoming_future = transport_actor::transport_incoming_lines_actor(incoming, tx);
 
             // Wait for both to complete
             futures::try_join!(outgoing_future, incoming_future)?;
