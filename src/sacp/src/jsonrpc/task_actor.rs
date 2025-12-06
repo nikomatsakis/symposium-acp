@@ -8,6 +8,7 @@ use futures::{
 };
 
 use crate::JrConnectionCx;
+use crate::role::JrRole;
 
 pub(crate) struct Task {
     future: BoxFuture<'static, Result<(), crate::Error>>,
@@ -85,14 +86,14 @@ pub(super) async fn task_actor(
     }
 }
 
-pub(crate) struct PendingTask {
-    task_fn: Box<dyn PendingTaskFn>,
+pub(crate) struct PendingTask<R: JrRole> {
+    task_fn: Box<dyn PendingTaskFn<R>>,
 }
 
-impl PendingTask {
+impl<R: JrRole> PendingTask<R> {
     pub fn new<Fut>(
         location: &'static Location<'static>,
-        task_function: impl FnOnce(JrConnectionCx) -> Fut + Send + 'static,
+        task_function: impl FnOnce(JrConnectionCx<R>) -> Fut + Send + 'static,
     ) -> Self
     where
         Fut: Future<Output = Result<(), crate::Error>> + Send + 'static,
@@ -109,20 +110,20 @@ impl PendingTask {
         }
     }
 
-    pub fn into_task(self, cx: JrConnectionCx) -> Task {
+    pub fn into_task(self, cx: JrConnectionCx<R>) -> Task {
         self.task_fn.into_task(cx)
     }
 }
 
-trait PendingTaskFn: 'static + Send {
-    fn into_task(self: Box<Self>, cx: JrConnectionCx) -> Task;
+trait PendingTaskFn<R: JrRole>: 'static + Send {
+    fn into_task(self: Box<Self>, cx: JrConnectionCx<R>) -> Task;
 }
 
-impl<F> PendingTaskFn for F
+impl<R: JrRole, F> PendingTaskFn<R> for F
 where
-    F: FnOnce(JrConnectionCx) -> Task + 'static + Send,
+    F: FnOnce(JrConnectionCx<R>) -> Task + 'static + Send,
 {
-    fn into_task(self: Box<Self>, cx: JrConnectionCx) -> Task {
+    fn into_task(self: Box<Self>, cx: JrConnectionCx<R>) -> Task {
         (*self)(cx)
     }
 }

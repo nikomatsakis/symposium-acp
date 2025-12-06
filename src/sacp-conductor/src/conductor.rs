@@ -207,9 +207,12 @@ impl Conductor {
             pending_requests: Default::default(),
         };
 
-        JrHandlerChain::new_with(ConductorMessageHandler {
-            conductor_tx: conductor_tx.clone(),
-        })
+        JrHandlerChain::new_with(
+            ConductorMessageHandler {
+                conductor_tx: conductor_tx.clone(),
+            },
+            sacp::DefaultRole,
+        )
         .name(self.name)
         .with_spawned(async move |cx| {
             // Components are now spawned lazily in forward_initialize_request

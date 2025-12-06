@@ -175,6 +175,8 @@ mod jsonrpc;
 pub mod mcp_server;
 /// Proxy support for building ACP proxy components
 pub mod proxy;
+/// Role types for JSON-RPC connections
+mod role;
 /// ACP protocol schema types - all message types, requests, responses, and supporting types
 pub mod schema;
 /// Utility functions and types
@@ -198,6 +200,8 @@ pub use jsonrpc::{
     JrMessage, JrMessageHandler, JrMessageHandlerSend, JrNotification, JrRequest, JrRequestCx,
     JrResponse, JrResponsePayload, Lines, MessageAndCx, UntypedMessage,
 };
+
+pub use role::{DefaultRole, JrRole};
 
 pub use component::{Component, DynComponent};
 

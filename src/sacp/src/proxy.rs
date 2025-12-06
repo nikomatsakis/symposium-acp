@@ -29,6 +29,7 @@ use std::marker::PhantomData;
 
 use crate::handler::ChainedHandler;
 use crate::mcp_server::McpServiceRegistry;
+use crate::role::DefaultRole;
 use crate::schema::{
     InitializeRequest, InitializeResponse, SuccessorNotification, SuccessorRequest,
 };
@@ -235,10 +236,15 @@ where
     N: JrNotification,
     F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
 {
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        std::any::type_name::<R>()
+    }
+
     async fn handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> Result<Handled<MessageAndCx>, crate::Error> {
+        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
+    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+    {
         match message {
             MessageAndCx::Request(request, request_cx) => {
                 tracing::trace!(
@@ -307,10 +313,6 @@ where
             }
         }
     }
-
-    fn describe_chain(&self) -> impl std::fmt::Debug {
-        std::any::type_name::<R>()
-    }
 }
 
 /// Handler to process a request of type `R` coming from the successor component.
@@ -342,10 +344,15 @@ where
     R: JrRequest,
     F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
 {
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        std::any::type_name::<R>()
+    }
+
     async fn handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> Result<Handled<MessageAndCx>, crate::Error> {
+        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
+    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+    {
         let MessageAndCx::Request(request, cx) = message else {
             return Ok(Handled::No(message));
         };
@@ -370,10 +377,6 @@ where
                 Ok(Handled::No(MessageAndCx::Request(request, cx)))
             }
         }
-    }
-
-    fn describe_chain(&self) -> impl std::fmt::Debug {
-        std::any::type_name::<R>()
     }
 }
 
@@ -406,15 +409,23 @@ where
     N: JrNotification,
     F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
 {
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        format!("FromSuccessor<{}>", std::any::type_name::<N>())
+    }
+
     async fn handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> Result<Handled<MessageAndCx>, crate::Error> {
-        let MessageAndCx::Notification(message, cx) = message else {
+        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
+    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+    {
+        let MessageAndCx::Notification(notif_message, cx) = message else {
             return Ok(Handled::No(message));
         };
 
-        match <SuccessorNotification<N>>::parse_notification(&message.method, &message.params) {
+        match <SuccessorNotification<N>>::parse_notification(
+            &notif_message.method,
+            &notif_message.params,
+        ) {
             Some(Ok(notification)) => {
                 tracing::trace!(
                     ?notification,
@@ -432,13 +443,9 @@ where
             }
             None => {
                 tracing::trace!("NotificationFromSuccessorHandler::handle_request: parse failed");
-                Ok(Handled::No(MessageAndCx::Notification(message, cx)))
+                Ok(Handled::No(MessageAndCx::Notification(notif_message, cx)))
             }
         }
-    }
-
-    fn describe_chain(&self) -> impl std::fmt::Debug {
-        format!("FromSuccessor<{}>", std::any::type_name::<N>())
     }
 }
 
@@ -452,8 +459,9 @@ impl JrMessageHandler for ProxyHandler {
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> Result<Handled<MessageAndCx>, crate::Error> {
+        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
+    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+    {
         tracing::debug!(
             message = ?message.message(),
             "ProxyHandler::handle_request"

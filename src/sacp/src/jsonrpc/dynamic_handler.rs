@@ -1,23 +1,25 @@
 use futures::future::BoxFuture;
 use uuid::Uuid;
 
-use crate::{Handled, MessageAndCx, jsonrpc::JrMessageHandlerSend};
+use crate::role::{DefaultRole, JrRole};
+use crate::{Handled, MessageAndCx, UntypedMessage, jsonrpc::JrMessageHandlerSend};
 
 /// Internal dyn-safe wrapper around `JrMessageHandlerSend`
-pub(crate) trait DynamicHandler: Send {
+pub(crate) trait DynamicHandler<R: JrRole = DefaultRole>: Send {
     fn dyn_handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> BoxFuture<'_, Result<Handled<MessageAndCx>, crate::Error>>;
+        message: MessageAndCx<UntypedMessage, UntypedMessage, R>,
+    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error>>;
 
     fn dyn_describe_chain(&self) -> String;
 }
 
-impl<H: JrMessageHandlerSend> DynamicHandler for H {
+impl<H: JrMessageHandlerSend<R>, R: JrRole> DynamicHandler<R> for H {
     fn dyn_handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> BoxFuture<'_, Result<Handled<MessageAndCx>, crate::Error>> {
+        message: MessageAndCx<UntypedMessage, UntypedMessage, R>,
+    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error>>
+    {
         Box::pin(JrMessageHandlerSend::handle_message(self, message))
     }
 
@@ -27,7 +29,7 @@ impl<H: JrMessageHandlerSend> DynamicHandler for H {
 }
 
 /// Messages used to add/remove dynamic handlers
-pub(crate) enum DynamicHandlerMessage {
-    AddDynamicHandler(Uuid, Box<dyn DynamicHandler>),
+pub(crate) enum DynamicHandlerMessage<R: JrRole = DefaultRole> {
+    AddDynamicHandler(Uuid, Box<dyn DynamicHandler<R>>),
     RemoveDynamicHandler(Uuid),
 }

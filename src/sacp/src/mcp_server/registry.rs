@@ -11,8 +11,8 @@ use crate::schema::{
 };
 use crate::util::MatchMessage;
 use crate::{
-    Channel, Component, DynComponent, Handled, JrConnectionCx, JrHandlerChain,
-    JrMessageHandlerSend, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
+    Channel, Component, DynComponent, Handled, JrConnectionCx, JrHandlerChain, JrMessageHandler,
+    JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
 };
 use std::sync::{Arc, Mutex};
 
@@ -429,7 +429,7 @@ impl McpServiceRegistry {
     }
 }
 
-impl JrMessageHandlerSend for McpServiceRegistry {
+impl JrMessageHandler for McpServiceRegistry {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "McpServiceRegistry"
     }
@@ -497,6 +497,19 @@ impl JrMessageHandlerSend for McpServiceRegistry {
             })
             .await
             .done()
+    }
+}
+
+impl crate::JrMessageHandlerSend for McpServiceRegistry {
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        "McpServiceRegistry"
+    }
+
+    fn handle_message(
+        &mut self,
+        message: MessageAndCx,
+    ) -> impl std::future::Future<Output = Result<Handled<MessageAndCx>, crate::Error>> + Send {
+        <Self as JrMessageHandler>::handle_message(self, message)
     }
 }
 
