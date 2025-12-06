@@ -68,11 +68,16 @@ pub trait JrMessageHandler {
 /// methods like [`JrHandlerChain::on_receive_message`], then it is better to implement this Send trait
 /// when possible.
 pub trait JrMessageHandlerSend: Send {
+    /// Returns a (sendable) future that will potentially handle the message.
+    /// The [`Handled`] return value indicates whether the message was handled or not.
+    /// If the message was not handled, it may have been modified, and the modified message
+    /// (and return cx) should be used from that point forward.
     fn handle_message(
         &mut self,
         message: MessageAndCx,
     ) -> impl Future<Output = Result<Handled<MessageAndCx>, crate::Error>> + Send;
 
+    /// Describe this handler chain.
     fn describe_chain(&self) -> impl std::fmt::Debug;
 }
 

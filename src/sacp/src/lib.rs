@@ -191,8 +191,8 @@ pub mod jsonrpcmsg {
 
 pub use jsonrpc::{
     ByteStreams, Channel, Handled, IntoHandled, JrConnection, JrConnectionCx, JrHandlerChain,
-    JrMessage, JrMessageHandler, JrNotification, JrRequest, JrRequestCx, JrResponse,
-    JrResponsePayload, Lines, MessageAndCx, UntypedMessage,
+    JrMessage, JrMessageHandler, JrMessageHandlerSend, JrNotification, JrRequest, JrRequestCx,
+    JrResponse, JrResponsePayload, Lines, MessageAndCx, UntypedMessage,
 };
 
 pub use component::{Component, DynComponent};

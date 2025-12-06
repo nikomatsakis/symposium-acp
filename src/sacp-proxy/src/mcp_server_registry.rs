@@ -5,8 +5,8 @@ use fxhash::FxHashMap;
 use sacp::schema::{NewSessionRequest, NewSessionResponse};
 use sacp::util::MatchMessage;
 use sacp::{
-    Channel, Component, DynComponent, Handled, JrConnectionCx, JrHandlerChain, JrMessageHandler,
-    JrRequestCx, MessageAndCx, UntypedMessage,
+    Channel, Component, DynComponent, Handled, JrConnectionCx, JrHandlerChain,
+    JrMessageHandlerSend, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
 };
 use std::sync::{Arc, Mutex};
 
@@ -229,23 +229,38 @@ impl McpServiceRegistry {
         }
     }
 
+    async fn handle_successor_request<R: JrRequest>(
+        &self,
+        successor_request: SuccessorRequest<R>,
+        request_cx: JrRequestCx<R::Response>,
+        op: impl AsyncFnOnce(
+            &Self,
+            R,
+            JrRequestCx<R::Response>,
+        ) -> Result<Handled<(R, JrRequestCx<R::Response>)>, sacp::Error>,
+    ) -> Result<Handled<(SuccessorRequest<R>, JrRequestCx<R::Response>)>, sacp::Error> {
+        match op(self, successor_request.request, request_cx).await? {
+            Handled::Yes => Ok(Handled::Yes),
+            Handled::No((request, cx)) => Ok(Handled::No((
+                SuccessorRequest {
+                    request,
+                    ..successor_request
+                },
+                cx,
+            ))),
+        }
+    }
+
     async fn handle_connect_request(
         &self,
-        successor_request: SuccessorRequest<McpConnectRequest>,
+        request: McpConnectRequest,
         request_cx: JrRequestCx<McpConnectResponse>,
-    ) -> Result<
-        Handled<(
-            SuccessorRequest<McpConnectRequest>,
-            JrRequestCx<McpConnectResponse>,
-        )>,
-        sacp::Error,
-    > {
-        let SuccessorRequest { request, .. } = &successor_request;
+    ) -> Result<Handled<(McpConnectRequest, JrRequestCx<McpConnectResponse>)>, sacp::Error> {
         let outer_cx = request_cx.connection_cx();
 
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
         let Some(registered_server) = self.get_registered_server_by_url(&request.acp_url) else {
-            return Ok(Handled::No((successor_request, request_cx)));
+            return Ok(Handled::No((request, request_cx)));
         };
 
         // Create a unique connection ID and a channel for future communication
@@ -330,22 +345,19 @@ impl McpServiceRegistry {
 
     async fn handle_mcp_over_acp_request(
         &self,
-        successor_request: SuccessorRequest<McpOverAcpRequest<UntypedMessage>>,
+        request: McpOverAcpRequest<UntypedMessage>,
         request_cx: JrRequestCx<serde_json::Value>,
     ) -> Result<
         Handled<(
-            SuccessorRequest<McpOverAcpRequest<UntypedMessage>>,
+            McpOverAcpRequest<UntypedMessage>,
             JrRequestCx<serde_json::Value>,
         )>,
         sacp::Error,
     > {
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
-        let Some(mut mcp_server_tx) = self.get_connection(&successor_request.request.connection_id)
-        else {
-            return Ok(Handled::No((successor_request, request_cx)));
+        let Some(mut mcp_server_tx) = self.get_connection(&request.connection_id) else {
+            return Ok(Handled::No((request, request_cx)));
         };
-
-        let SuccessorRequest { request, .. } = successor_request;
 
         mcp_server_tx
             .send(MessageAndCx::Request(request.request, request_cx))
@@ -355,25 +367,38 @@ impl McpServiceRegistry {
         Ok(Handled::Yes)
     }
 
+    async fn handle_successor_notification<N: JrNotification>(
+        &self,
+        successor_notification: SuccessorNotification<N>,
+        notification_cx: JrConnectionCx,
+        op: impl AsyncFnOnce(
+            &Self,
+            N,
+            JrConnectionCx,
+        ) -> Result<Handled<(N, JrConnectionCx)>, sacp::Error>,
+    ) -> Result<Handled<(SuccessorNotification<N>, JrConnectionCx)>, sacp::Error> {
+        match op(self, successor_notification.notification, notification_cx).await? {
+            Handled::Yes => Ok(Handled::Yes),
+            Handled::No((notification, cx)) => Ok(Handled::No((
+                SuccessorNotification {
+                    notification,
+                    ..successor_notification
+                },
+                cx,
+            ))),
+        }
+    }
+
     async fn handle_mcp_over_acp_notification(
         &self,
-        successor_notification: SuccessorNotification<McpOverAcpNotification<UntypedMessage>>,
+        notification: McpOverAcpNotification<UntypedMessage>,
         notification_cx: JrConnectionCx,
-    ) -> Result<
-        Handled<(
-            SuccessorNotification<McpOverAcpNotification<UntypedMessage>>,
-            JrConnectionCx,
-        )>,
-        sacp::Error,
-    > {
+    ) -> Result<Handled<(McpOverAcpNotification<UntypedMessage>, JrConnectionCx)>, sacp::Error>
+    {
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
-        let Some(mut mcp_server_tx) =
-            self.get_connection(&successor_notification.notification.connection_id)
-        else {
-            return Ok(Handled::No((successor_notification, notification_cx)));
+        let Some(mut mcp_server_tx) = self.get_connection(&notification.connection_id) else {
+            return Ok(Handled::No((notification, notification_cx)));
         };
-
-        let SuccessorNotification { notification, .. } = successor_notification;
 
         mcp_server_tx
             .send(MessageAndCx::Notification(
@@ -388,19 +413,11 @@ impl McpServiceRegistry {
 
     async fn handle_mcp_disconnect_notification(
         &self,
-        successor_notification: SuccessorNotification<McpDisconnectNotification>,
+        successor_notification: McpDisconnectNotification,
         notification_cx: JrConnectionCx,
-    ) -> Result<
-        Handled<(
-            SuccessorNotification<McpDisconnectNotification>,
-            JrConnectionCx,
-        )>,
-        sacp::Error,
-    > {
-        let SuccessorNotification { notification, .. } = &successor_notification;
-
+    ) -> Result<Handled<(McpDisconnectNotification, JrConnectionCx)>, sacp::Error> {
         // Remove connection if we have it. Otherwise, do not handle the notification.
-        if self.remove_connection(&notification.connection_id) {
+        if self.remove_connection(&successor_notification.connection_id) {
             Ok(Handled::Yes)
         } else {
             Ok(Handled::No((successor_notification, notification_cx)))
@@ -422,7 +439,7 @@ impl McpServiceRegistry {
     }
 }
 
-impl JrMessageHandler for McpServiceRegistry {
+impl JrMessageHandlerSend for McpServiceRegistry {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "McpServiceRegistry"
     }
@@ -431,19 +448,62 @@ impl JrMessageHandler for McpServiceRegistry {
         &mut self,
         message: sacp::MessageAndCx,
     ) -> Result<sacp::Handled<sacp::MessageAndCx>, sacp::Error> {
+        // Hmm, this is a bit wacky:
+        //
+        // * In a proxy, we expect to receive MCP over ACP notifications wrapped as a "FromSuccessorNotification"
+        //   and we don't expect to receive them unwrapped (that would be the client sending it to us, not our agent,
+        //   and that's weird);
+        // * But in a *client*, we expect to receive incoming messages unwrapped (i.e., from our successor),
+        //   and not wrapped (we don't expect *anything* wrapped).
+        //
+        // So we just accept them in either direction for now. The whole thing feels a bit inelegant,
+        // but I guess it works.
+
         MatchMessage::new(message)
             .if_request(|request, request_cx| self.handle_connect_request(request, request_cx))
             .await
+            .if_request(|request, request_cx| {
+                self.handle_successor_request(request, request_cx, Self::handle_connect_request)
+            })
+            .await
             .if_request(|request, request_cx| self.handle_mcp_over_acp_request(request, request_cx))
             .await
+            .if_request(|request, request_cx| {
+                self.handle_successor_request(
+                    request,
+                    request_cx,
+                    Self::handle_mcp_over_acp_request,
+                )
+            })
+            .await
             .if_request(|request, request_cx| self.handle_new_session_request(request, request_cx))
+            .await
+            .if_request(|request, request_cx| {
+                self.handle_successor_request(request, request_cx, Self::handle_new_session_request)
+            })
             .await
             .if_notification(|notification, notification_cx| {
                 self.handle_mcp_over_acp_notification(notification, notification_cx)
             })
             .await
+            .if_notification(|request, request_cx| {
+                self.handle_successor_notification(
+                    request,
+                    request_cx,
+                    Self::handle_mcp_over_acp_notification,
+                )
+            })
+            .await
             .if_notification(|notification, notification_cx| {
                 self.handle_mcp_disconnect_notification(notification, notification_cx)
+            })
+            .await
+            .if_notification(|request, request_cx| {
+                self.handle_successor_notification(
+                    request,
+                    request_cx,
+                    Self::handle_mcp_disconnect_notification,
+                )
             })
             .await
             .done()
