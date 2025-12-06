@@ -1,145 +1,47 @@
-use sacp::handler::ChainedHandler;
-use sacp::schema::{InitializeRequest, InitializeResponse};
-use sacp::{
+//! Proxy support for building ACP proxy components.
+//!
+//! Proxies are modular components that sit between an editor and an agent,
+//! intercepting and transforming messages. They enable composable agent
+//! architectures where functionality can be added without modifying the base agent.
+//!
+//! ```text
+//! Editor → Proxy 1 → Proxy 2 → Agent
+//! ```
+//!
+//! ## Quick Start
+//!
+//! The simplest proxy just forwards messages unchanged:
+//!
+//! ```rust,ignore
+//! use sacp::JrHandlerChain;
+//! use sacp::proxy::AcpProxyExt;
+//! use sacp::mcp_server::McpServiceRegistry;
+//!
+//! JrHandlerChain::new()
+//!     .name("my-proxy")
+//!     .provide_mcp(McpServiceRegistry::default())
+//!     .proxy()
+//!     .serve(connection)
+//!     .await?;
+//! ```
+
+use std::marker::PhantomData;
+
+use crate::handler::ChainedHandler;
+use crate::mcp_server::McpServiceRegistry;
+use crate::schema::{
+    InitializeRequest, InitializeResponse, SuccessorNotification, SuccessorRequest,
+};
+use crate::{
     Handled, JrConnectionCx, JrHandlerChain, JrMessage, JrMessageHandler, JrNotification,
     JrRequest, JrRequestCx, MessageAndCx, MetaCapabilityExt, Proxy, UntypedMessage,
 };
-use serde::{Deserialize, Serialize};
-use std::marker::PhantomData;
 
-use crate::mcp_server_registry::McpServiceRegistry;
+// =============================================================================
+// Extension traits
+// =============================================================================
 
-// Requests and notifications send between us and the successor
-// ============================================================
-
-const SUCCESSOR_REQUEST_METHOD: &str = "_proxy/successor/request";
-
-/// A request being sent to the successor component.
-///
-/// Used in `_proxy/successor/send` when the proxy wants to forward a request downstream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SuccessorRequest<Req: JrRequest> {
-    /// The message to be sent to the successor component.
-    #[serde(flatten)]
-    pub request: Req,
-
-    /// Optional metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub meta: Option<serde_json::Value>,
-}
-
-impl<Req: JrRequest> JrMessage for SuccessorRequest<Req> {
-    fn to_untyped_message(&self) -> Result<sacp::UntypedMessage, sacp::Error> {
-        sacp::UntypedMessage::new(
-            SUCCESSOR_REQUEST_METHOD,
-            SuccessorRequest {
-                request: self.request.to_untyped_message()?,
-                meta: self.meta.clone(),
-            },
-        )
-    }
-
-    fn method(&self) -> &str {
-        SUCCESSOR_REQUEST_METHOD
-    }
-
-    fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, sacp::Error>> {
-        if method == SUCCESSOR_REQUEST_METHOD {
-            match sacp::util::json_cast::<_, SuccessorRequest<sacp::UntypedMessage>>(params) {
-                Ok(outer) => match Req::parse_request(&outer.request.method, &outer.request.params)
-                {
-                    Some(Ok(request)) => Some(Ok(SuccessorRequest {
-                        request,
-                        meta: outer.meta,
-                    })),
-                    Some(Err(err)) => Some(Err(err)),
-                    None => None,
-                },
-                Err(err) => Some(Err(err)),
-            }
-        } else {
-            None
-        }
-    }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, sacp::Error>> {
-        None // Request, not notification
-    }
-}
-
-impl<Req: JrRequest> JrRequest for SuccessorRequest<Req> {
-    type Response = Req::Response;
-}
-
-const SUCCESSOR_NOTIFICATION_METHOD: &str = "_proxy/successor/notification";
-
-/// A notification being sent to the successor component.
-///
-/// Used in `_proxy/successor/send` when the proxy wants to forward a notification downstream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SuccessorNotification<Req: JrNotification> {
-    /// The message to be sent to the successor component.
-    #[serde(flatten)]
-    pub notification: Req,
-
-    /// Optional metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub meta: Option<serde_json::Value>,
-}
-
-impl<Req: JrNotification> JrMessage for SuccessorNotification<Req> {
-    fn to_untyped_message(&self) -> Result<sacp::UntypedMessage, sacp::Error> {
-        sacp::UntypedMessage::new(
-            SUCCESSOR_NOTIFICATION_METHOD,
-            SuccessorNotification {
-                notification: self.notification.to_untyped_message()?,
-                meta: self.meta.clone(),
-            },
-        )
-    }
-
-    fn method(&self) -> &str {
-        SUCCESSOR_NOTIFICATION_METHOD
-    }
-
-    fn parse_request(_method: &str, _params: &impl Serialize) -> Option<Result<Self, sacp::Error>> {
-        None // Notification, not request
-    }
-
-    fn parse_notification(
-        method: &str,
-        params: &impl Serialize,
-    ) -> Option<Result<Self, sacp::Error>> {
-        if method == SUCCESSOR_NOTIFICATION_METHOD {
-            match sacp::util::json_cast::<_, SuccessorNotification<sacp::UntypedMessage>>(params) {
-                Ok(outer) => match Req::parse_notification(
-                    &outer.notification.method,
-                    &outer.notification.params,
-                ) {
-                    Some(Ok(notification)) => Some(Ok(SuccessorNotification {
-                        notification,
-                        meta: outer.meta,
-                    })),
-                    Some(Err(err)) => Some(Err(err)),
-                    None => None,
-                },
-                Err(err) => Some(Err(err)),
-            }
-        } else {
-            None
-        }
-    }
-}
-
-impl<Req: JrNotification> JrNotification for SuccessorNotification<Req> {}
-
-// Proxy methods
-// ============================================================
-
-/// Extension trait for JrConnection that adds proxy-specific functionality
+/// Extension trait for JrHandlerChain that adds proxy-specific functionality
 pub trait AcpProxyExt<H: JrMessageHandler> {
     /// Adds a handler for requests received from the successor component.
     ///
@@ -147,29 +49,13 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     /// `_proxy/successor/receive/*` protocol wrappers are handled automatically.
     /// Your handler processes normal ACP requests and notifications as if it were
     /// a regular ACP component.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// # use sacp::proxy::JrConnectionExt;
-    /// # use sacp::{JrConnection, JrHandler};
-    /// # struct MyHandler;
-    /// # impl JrHandler for MyHandler {}
-    /// # async fn example() -> Result<(), sacp::Error> {
-    /// JrConnection::new(tokio::io::stdin(), tokio::io::stdout())
-    ///     .on_receive_from_successor(MyHandler)
-    ///     .serve()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     fn on_receive_request_from_successor<R, F>(
         self,
         op: F,
     ) -> JrHandlerChain<ChainedHandler<H, RequestFromSuccessorHandler<R, F>>>
     where
         R: JrRequest,
-        F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), sacp::Error>;
+        F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>;
 
     /// Adds a handler for notifications received from the successor component.
     ///
@@ -177,29 +63,13 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     /// `_proxy/successor/receive/*` protocol wrappers are handled automatically.
     /// Your handler processes normal ACP requests and notifications as if it were
     /// a regular ACP component.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// # use sacp::proxy::JrConnectionExt;
-    /// # use sacp::{JrConnection, JrHandler};
-    /// # struct MyHandler;
-    /// # impl JrHandler for MyHandler {}
-    /// # async fn example() -> Result<(), sacp::Error> {
-    /// JrConnection::new()
-    ///     .on_receive_from_successor(MyHandler)
-    ///     .serve()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     fn on_receive_notification_from_successor<N, F>(
         self,
         op: F,
     ) -> JrHandlerChain<ChainedHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JrNotification,
-        F: AsyncFnMut(N, JrConnectionCx) -> Result<(), sacp::Error>;
+        F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>;
 
     /// Adds a handler for messages received from the successor component.
     ///
@@ -214,7 +84,7 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     where
         R: JrRequest,
         N: JrNotification,
-        F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), sacp::Error>;
+        F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>;
 
     /// Installs a proxy layer that proxies all requests/notifications to/from the successor.
     /// This is typically the last component in the chain.
@@ -236,7 +106,7 @@ impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<H> {
     ) -> JrHandlerChain<ChainedHandler<H, RequestFromSuccessorHandler<R, F>>>
     where
         R: JrRequest,
-        F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), sacp::Error>,
+        F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
     {
         self.with_handler(RequestFromSuccessorHandler::new(op))
     }
@@ -247,7 +117,7 @@ impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<H> {
     ) -> JrHandlerChain<ChainedHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JrNotification,
-        F: AsyncFnMut(N, JrConnectionCx) -> Result<(), sacp::Error>,
+        F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
     {
         self.with_handler(NotificationFromSuccessorHandler::new(op))
     }
@@ -259,7 +129,7 @@ impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<H> {
     where
         R: JrRequest,
         N: JrNotification,
-        F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), sacp::Error>,
+        F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
     {
         self.with_handler(MessageFromSuccessorHandler::new(op))
     }
@@ -276,12 +146,69 @@ impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<H> {
     }
 }
 
+/// Extension trait for [`JrConnectionCx`] that adds methods for sending to successor.
+///
+/// This trait provides convenient methods for proxies to forward messages downstream
+/// to their successor component (next proxy or agent). Messages are automatically
+/// wrapped in the `_proxy/successor/send/*` protocol format.
+pub trait JrCxExt {
+    /// Send a request to the successor component.
+    ///
+    /// The request is automatically wrapped in a `SuccessorRequest` and sent
+    /// using the `_proxy/successor/request` method. The orchestrator routes
+    /// it to the next component in the chain.
+    fn send_request_to_successor<Req: JrRequest>(
+        &self,
+        request: Req,
+    ) -> crate::JrResponse<Req::Response>;
+
+    /// Send a notification to the successor component.
+    ///
+    /// The notification is automatically wrapped in a `SuccessorNotification`
+    /// and sent using the `_proxy/successor/notification` method. The
+    /// orchestrator routes it to the next component in the chain.
+    ///
+    /// Notifications are fire-and-forget - no response is expected.
+    fn send_notification_to_successor<Req: JrNotification>(
+        &self,
+        notification: Req,
+    ) -> Result<(), crate::Error>;
+}
+
+impl JrCxExt for JrConnectionCx {
+    fn send_request_to_successor<Req: JrRequest>(
+        &self,
+        request: Req,
+    ) -> crate::JrResponse<Req::Response> {
+        let wrapper = SuccessorRequest {
+            request,
+            meta: None,
+        };
+        self.send_request(wrapper)
+    }
+
+    fn send_notification_to_successor<Req: JrNotification>(
+        &self,
+        notification: Req,
+    ) -> Result<(), crate::Error> {
+        let wrapper = SuccessorNotification {
+            notification,
+            meta: None,
+        };
+        self.send_notification(wrapper)
+    }
+}
+
+// =============================================================================
+// Handlers
+// =============================================================================
+
 /// Handler to process a message of type `R` coming from the successor component.
 pub struct MessageFromSuccessorHandler<R, N, F>
 where
     R: JrRequest,
     N: JrNotification,
-    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(R, N)>,
@@ -291,7 +218,7 @@ impl<R, N, F> MessageFromSuccessorHandler<R, N, F>
 where
     R: JrRequest,
     N: JrNotification,
-    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
 {
     /// Creates a new handler for requests from the successor
     pub fn new(handler: F) -> Self {
@@ -306,12 +233,12 @@ impl<R, N, F> JrMessageHandler for MessageFromSuccessorHandler<R, N, F>
 where
     R: JrRequest,
     N: JrNotification,
-    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
 {
     async fn handle_message(
         &mut self,
-        message: sacp::MessageAndCx,
-    ) -> Result<Handled<sacp::MessageAndCx>, sacp::Error> {
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, crate::Error> {
         match message {
             MessageAndCx::Request(request, request_cx) => {
                 tracing::trace!(
@@ -390,7 +317,7 @@ where
 pub struct RequestFromSuccessorHandler<R, F>
 where
     R: JrRequest,
-    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(R)>,
@@ -399,7 +326,7 @@ where
 impl<R, F> RequestFromSuccessorHandler<R, F>
 where
     R: JrRequest,
-    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
 {
     /// Creates a new handler for requests from the successor
     pub fn new(handler: F) -> Self {
@@ -413,12 +340,12 @@ where
 impl<R, F> JrMessageHandler for RequestFromSuccessorHandler<R, F>
 where
     R: JrRequest,
-    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
 {
     async fn handle_message(
         &mut self,
-        message: sacp::MessageAndCx,
-    ) -> Result<Handled<sacp::MessageAndCx>, sacp::Error> {
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, crate::Error> {
         let MessageAndCx::Request(request, cx) = message else {
             return Ok(Handled::No(message));
         };
@@ -454,7 +381,7 @@ where
 pub struct NotificationFromSuccessorHandler<N, F>
 where
     N: JrNotification,
-    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(N)>,
@@ -463,7 +390,7 @@ where
 impl<N, F> NotificationFromSuccessorHandler<N, F>
 where
     N: JrNotification,
-    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
 {
     /// Creates a new handler for notifications from the successor
     pub fn new(handler: F) -> Self {
@@ -477,12 +404,12 @@ where
 impl<N, F> JrMessageHandler for NotificationFromSuccessorHandler<N, F>
 where
     N: JrNotification,
-    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), sacp::Error>,
+    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
 {
     async fn handle_message(
         &mut self,
-        message: sacp::MessageAndCx,
-    ) -> Result<Handled<sacp::MessageAndCx>, sacp::Error> {
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, crate::Error> {
         let MessageAndCx::Notification(message, cx) = message else {
             return Ok(Handled::No(message));
         };
@@ -525,8 +452,8 @@ impl JrMessageHandler for ProxyHandler {
 
     async fn handle_message(
         &mut self,
-        message: sacp::MessageAndCx,
-    ) -> Result<Handled<sacp::MessageAndCx>, sacp::Error> {
+        message: MessageAndCx,
+    ) -> Result<Handled<MessageAndCx>, crate::Error> {
         tracing::debug!(
             message = ?message.message(),
             "ProxyHandler::handle_request"
@@ -597,7 +524,7 @@ impl ProxyHandler {
         &mut self,
         mut request: InitializeRequest,
         request_cx: JrRequestCx<InitializeResponse>,
-    ) -> Result<(), sacp::Error> {
+    ) -> Result<(), crate::Error> {
         tracing::debug!(
             method = request_cx.method(),
             params = ?request,
@@ -606,7 +533,7 @@ impl ProxyHandler {
 
         if !request.has_meta_capability(Proxy) {
             request_cx.respond_with_error(
-                sacp::Error::invalid_params()
+                crate::Error::invalid_params()
                     .with_data("this command requires the proxy capability"),
             )?;
             return Ok(());
@@ -620,91 +547,5 @@ impl ProxyHandler {
                 result = result.map(|r| r.add_meta_capability(Proxy));
                 request_cx.respond_with_result(result)
             })
-    }
-}
-
-/// Extension trait for [`JrConnectionCx`](sacp::JrConnectionCx) that adds methods for sending to successor.
-///
-/// This trait provides convenient methods for proxies to forward messages downstream
-/// to their successor component (next proxy or agent). Messages are automatically
-/// wrapped in the `_proxy/successor/send/*` protocol format.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // Example using ACP request types
-/// use sacp::proxy::JrCxExt;
-/// use agent_client_protocol_schema_schema::agent::PromptRequest;
-///
-/// async fn forward_prompt(cx: &JsonRpcCx, prompt: PromptRequest) {
-///     let response = cx.send_request_to_successor(prompt).recv().await?;
-///     // response is the typed response from the successor
-/// }
-/// ```
-pub trait JrCxExt {
-    /// Send a request to the successor component.
-    ///
-    /// The request is automatically wrapped in a `ToSuccessorRequest` and sent
-    /// using the `_proxy/successor/send/request` method. The orchestrator routes
-    /// it to the next component in the chain.
-    ///
-    /// # Returns
-    ///
-    /// Returns a [`JrResponse`](sacp::JrResponse) that can be awaited to get the successor's
-    /// response.
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// use sacp::proxy::JrCxExt;
-    /// use agent_client_protocol_schema_schema::agent::PromptRequest;
-    ///
-    /// let prompt = PromptRequest { /* ... */ };
-    /// let response = cx.send_request_to_successor(prompt).recv().await?;
-    /// // response is the typed PromptResponse
-    /// ```
-    fn send_request_to_successor<Req: JrRequest>(
-        &self,
-        request: Req,
-    ) -> sacp::JrResponse<Req::Response>;
-
-    /// Send a notification to the successor component.
-    ///
-    /// The notification is automatically wrapped in a `ToSuccessorNotification`
-    /// and sent using the `_proxy/successor/send/notification` method. The
-    /// orchestrator routes it to the next component in the chain.
-    ///
-    /// Notifications are fire-and-forget - no response is expected.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the notification fails to send.
-    fn send_notification_to_successor<Req: JrNotification>(
-        &self,
-        notification: Req,
-    ) -> Result<(), sacp::Error>;
-}
-
-impl JrCxExt for JrConnectionCx {
-    fn send_request_to_successor<Req: JrRequest>(
-        &self,
-        request: Req,
-    ) -> sacp::JrResponse<Req::Response> {
-        let wrapper = SuccessorRequest {
-            request,
-            meta: None,
-        };
-        self.send_request(wrapper)
-    }
-
-    fn send_notification_to_successor<Req: JrNotification>(
-        &self,
-        notification: Req,
-    ) -> Result<(), sacp::Error> {
-        let wrapper = SuccessorNotification {
-            notification,
-            meta: None,
-        };
-        self.send_notification(wrapper)
     }
 }

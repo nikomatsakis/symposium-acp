@@ -15,7 +15,8 @@ use rmcp::{
     tool, tool_handler, tool_router,
 };
 use sacp::JrHandlerChain;
-use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
+use sacp::mcp_server::McpServiceRegistry;
+use sacp::proxy::AcpProxyExt;
 use sacp_rmcp::McpServiceRegistryRmcpExt;
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};

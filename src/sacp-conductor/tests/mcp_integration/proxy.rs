@@ -1,7 +1,8 @@
 //! Proxy component that provides MCP tools
 
+use sacp::mcp_server::{McpServer, McpServiceRegistry};
+use sacp::proxy::AcpProxyExt;
 use sacp::{Component, JrHandlerChain};
-use sacp_proxy::{AcpProxyExt, McpServer, McpServiceRegistry};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

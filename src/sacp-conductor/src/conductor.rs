@@ -121,6 +121,12 @@ use futures::{
     SinkExt, StreamExt,
     channel::mpsc::{self},
 };
+use sacp::Component;
+use sacp::proxy::{AcpProxyExt, JrCxExt};
+use sacp::schema::{
+    McpConnectRequest, McpConnectResponse, McpDisconnectNotification, McpOverAcpNotification,
+    McpOverAcpRequest, SuccessorNotification, SuccessorRequest,
+};
 use sacp::{
     JrConnectionCx, JrHandlerChain, JrNotification, JrRequest, JrRequestCx, JrResponse,
     MessageAndCx, MetaCapabilityExt, Proxy, UntypedMessage,
@@ -129,11 +135,6 @@ use sacp::{
     JrMessageHandler, JrResponsePayload,
     schema::{InitializeRequest, InitializeResponse, NewSessionRequest, NewSessionResponse},
     util::MatchMessage,
-};
-use sacp_proxy::{
-    AcpProxyExt, Component, JrCxExt, McpConnectRequest, McpConnectResponse,
-    McpDisconnectNotification, McpOverAcpNotification, McpOverAcpRequest, SuccessorNotification,
-    SuccessorRequest,
 };
 use tracing::{debug, info};
 

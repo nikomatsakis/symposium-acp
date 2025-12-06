@@ -1,3 +1,5 @@
+//! MCP server builder for creating MCP servers.
+
 use std::{marker::PhantomData, pin::pin, sync::Arc};
 
 use futures::future::Either;
@@ -7,15 +9,12 @@ use rmcp::{
     handler::server::tool::cached_schema_for_type,
     model::{CallToolResult, ListToolsResult, Tool},
 };
-use sacp::{BoxFuture, ByteStreams, Component};
-
-mod tool;
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
-pub use tool::*;
 
-use crate::McpContext;
+use super::{McpContext, McpTool};
+use crate::{BoxFuture, ByteStreams, Component};
 
 /// Our MCP server implementation.
 #[derive(Clone, Default)]
@@ -58,7 +57,14 @@ impl McpServer {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
+    /// McpServer::new()
+    ///     .tool_fn(
+    ///         "greet",
+    ///         "Greet someone by name",
+    ///         async |input: GreetInput, _cx| Ok(format!("Hello, {}!", input.name)),
+    ///         |t, args, cx| Box::pin(t(args, cx)),
+    ///     )
     /// ```
     pub fn tool_fn<P, R, F, H>(
         self,
@@ -70,8 +76,8 @@ impl McpServer {
     where
         P: JsonSchema + DeserializeOwned + 'static + Send,
         R: JsonSchema + Serialize + 'static + Send,
-        F: AsyncFn(P, McpContext) -> Result<R, sacp::Error> + Send + Sync + 'static,
-        H: Fn(&F, P, McpContext) -> BoxFuture<'_, Result<R, sacp::Error>> + Send + Sync + 'static,
+        F: AsyncFn(P, McpContext) -> Result<R, crate::Error> + Send + Sync + 'static,
+        H: Fn(&F, P, McpContext) -> BoxFuture<'_, Result<R, crate::Error>> + Send + Sync + 'static,
     {
         struct ToolFnTool<P, R, F, H> {
             name: String,
@@ -85,8 +91,8 @@ impl McpServer {
         where
             P: JsonSchema + DeserializeOwned + 'static + Send,
             R: JsonSchema + Serialize + 'static + Send,
-            F: AsyncFn(P, McpContext) -> Result<R, sacp::Error> + Send + Sync + 'static,
-            H: Fn(&F, P, McpContext) -> BoxFuture<'_, Result<R, sacp::Error>>
+            F: AsyncFn(P, McpContext) -> Result<R, crate::Error> + Send + Sync + 'static,
+            H: Fn(&F, P, McpContext) -> BoxFuture<'_, Result<R, crate::Error>>
                 + Send
                 + Sync
                 + 'static,
@@ -102,7 +108,7 @@ impl McpServer {
                 self.description.clone()
             }
 
-            async fn call_tool(&self, params: P, cx: McpContext) -> Result<R, sacp::Error> {
+            async fn call_tool(&self, params: P, cx: McpContext) -> Result<R, crate::Error> {
                 (self.to_future_hack)(&self.func, params, cx).await
             }
         }
@@ -133,7 +139,7 @@ pub(crate) struct McpServerConnection {
 }
 
 impl Component for McpServerConnection {
-    async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
+    async fn serve(self, client: impl Component) -> Result<(), crate::Error> {
         // Create tokio byte streams that rmcp expects
         let (mcp_server_stream, mcp_client_stream) = tokio::io::duplex(8192);
         let (mcp_server_read, mcp_server_write) = tokio::io::split(mcp_server_stream);
@@ -151,14 +157,14 @@ impl Component for McpServerConnection {
         // Run the rmcp server with the server side of the duplex stream
         let running_server = rmcp::ServiceExt::serve(self, (mcp_server_read, mcp_server_write))
             .await
-            .map_err(sacp::Error::into_internal_error)?;
+            .map_err(crate::Error::into_internal_error)?;
 
         // Wait for the server to finish
         running_server
             .waiting()
             .await
             .map(|_quit_reason| ())
-            .map_err(sacp::Error::into_internal_error)
+            .map_err(crate::Error::into_internal_error)
     }
 }
 
@@ -229,10 +235,10 @@ trait ErasedMcpTool: Send + Sync {
         &self,
         input: serde_json::Value,
         context: McpContext,
-    ) -> BoxFuture<'_, Result<serde_json::Value, sacp::Error>>;
+    ) -> BoxFuture<'_, Result<serde_json::Value, crate::Error>>;
 }
 
-//// Create an `rmcp` tool mode from our [`McpTool`] trait.
+/// Create an `rmcp` tool model from our [`McpTool`] trait.
 fn make_tool_model<M: McpTool>(tool: &M) -> Tool {
     rmcp::model::Tool {
         name: tool.name().into(),
@@ -256,11 +262,11 @@ fn make_erased_mcp_tool<'s, M: McpTool + 's>(tool: M) -> Arc<dyn ErasedMcpTool +
             &self,
             input: serde_json::Value,
             context: McpContext,
-        ) -> BoxFuture<'_, Result<serde_json::Value, sacp::Error>> {
+        ) -> BoxFuture<'_, Result<serde_json::Value, crate::Error>> {
             Box::pin(async move {
-                let input = serde_json::from_value(input).map_err(sacp::util::internal_error)?;
+                let input = serde_json::from_value(input).map_err(crate::util::internal_error)?;
                 serde_json::to_value(self.tool.call_tool(input, context).await?)
-                    .map_err(sacp::util::internal_error)
+                    .map_err(crate::util::internal_error)
             })
         }
     }
@@ -268,8 +274,8 @@ fn make_erased_mcp_tool<'s, M: McpTool + 's>(tool: M) -> Arc<dyn ErasedMcpTool +
     Arc::new(ErasedMcpToolImpl { tool })
 }
 
-/// Convert a [`sacp::Error`] into an [`rmcp::ErrorData`].
-fn to_rmcp_error(error: sacp::Error) -> rmcp::ErrorData {
+/// Convert a [`crate::Error`] into an [`rmcp::ErrorData`].
+fn to_rmcp_error(error: crate::Error) -> rmcp::ErrorData {
     rmcp::ErrorData {
         code: rmcp::model::ErrorCode(error.code),
         message: error.message.into(),

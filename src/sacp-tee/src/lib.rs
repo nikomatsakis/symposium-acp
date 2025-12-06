@@ -5,8 +5,8 @@
 
 use anyhow::Result;
 use sacp::component::Component;
+use sacp::proxy::AcpProxyExt;
 use sacp::{Handled, JrMessageHandler, MessageAndCx};
-use sacp_proxy::AcpProxyExt;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc;

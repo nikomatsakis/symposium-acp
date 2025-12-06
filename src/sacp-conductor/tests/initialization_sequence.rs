@@ -6,10 +6,10 @@
 //! 3. Proxy components must accept the capability or initialization fails
 //! 4. Last component (agent) never receives proxy capability offer
 
+use sacp::proxy::JrCxExt;
 use sacp::schema::{AgentCapabilities, InitializeRequest, InitializeResponse};
 use sacp::{Component, JrHandlerChain, MetaCapabilityExt, Proxy};
 use sacp_conductor::Conductor;
-use sacp_proxy::JrCxExt;
 use std::sync::Arc;
 use std::sync::Mutex;
 

@@ -1,6 +1,6 @@
 use futures::{SinkExt as _, StreamExt as _, channel::mpsc};
+use sacp::schema::McpDisconnectNotification;
 use sacp::{Component, DynComponent, JrHandlerChain, MessageAndCx};
-use sacp_proxy::McpDisconnectNotification;
 use tracing::info;
 
 use crate::conductor::ConductorMessage;

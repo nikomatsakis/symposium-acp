@@ -16,9 +16,13 @@ futures.workspace = true
 futures-concurrency = "7.6.3"
 fxhash.workspace = true
 jsonrpcmsg.workspace = true
+rmcp = { workspace = true, features = ["server"] }
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 

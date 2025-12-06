@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "src/sacp-proxy",
     "src/sacp-conductor",
     "src/sacp",
     "src/sacp-tokio",
@@ -9,7 +8,8 @@ members = [
     "src/sacp-test",
     "src/yopo",
     "src/sacp-tee",
-    "src/sacp-trace-viewer", "src/sacp-acp-client",
+    "src/sacp-trace-viewer",
+    "src/sacp-acp-client",
 ]
 resolver = "2"
 

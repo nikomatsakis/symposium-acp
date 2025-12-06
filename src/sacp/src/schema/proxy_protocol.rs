@@ -1,8 +1,144 @@
-use sacp;
-use sacp::{
-    JrMessage, JrNotification, JrRequest, JrResponsePayload, UntypedMessage, util::json_cast,
-};
+//! Protocol types for proxy and MCP-over-ACP communication.
+//!
+//! These types are intended to become part of the ACP protocol specification.
+
+use crate::{JrMessage, JrNotification, JrRequest, JrResponsePayload, UntypedMessage};
 use serde::{Deserialize, Serialize};
+
+// =============================================================================
+// Successor forwarding protocol
+// =============================================================================
+
+const SUCCESSOR_REQUEST_METHOD: &str = "_proxy/successor/request";
+
+/// A request being sent to the successor component.
+///
+/// Used in `_proxy/successor/request` when the proxy wants to forward a request downstream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuccessorRequest<Req: JrRequest> {
+    /// The message to be sent to the successor component.
+    #[serde(flatten)]
+    pub request: Req,
+
+    /// Optional metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
+}
+
+impl<Req: JrRequest> JrMessage for SuccessorRequest<Req> {
+    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
+        UntypedMessage::new(
+            SUCCESSOR_REQUEST_METHOD,
+            SuccessorRequest {
+                request: self.request.to_untyped_message()?,
+                meta: self.meta.clone(),
+            },
+        )
+    }
+
+    fn method(&self) -> &str {
+        SUCCESSOR_REQUEST_METHOD
+    }
+
+    fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
+        if method == SUCCESSOR_REQUEST_METHOD {
+            match crate::util::json_cast::<_, SuccessorRequest<UntypedMessage>>(params) {
+                Ok(outer) => match Req::parse_request(&outer.request.method, &outer.request.params)
+                {
+                    Some(Ok(request)) => Some(Ok(SuccessorRequest {
+                        request,
+                        meta: outer.meta,
+                    })),
+                    Some(Err(err)) => Some(Err(err)),
+                    None => None,
+                },
+                Err(err) => Some(Err(err)),
+            }
+        } else {
+            None
+        }
+    }
+
+    fn parse_notification(
+        _method: &str,
+        _params: &impl Serialize,
+    ) -> Option<Result<Self, crate::Error>> {
+        None // Request, not notification
+    }
+}
+
+impl<Req: JrRequest> JrRequest for SuccessorRequest<Req> {
+    type Response = Req::Response;
+}
+
+const SUCCESSOR_NOTIFICATION_METHOD: &str = "_proxy/successor/notification";
+
+/// A notification being sent to the successor component.
+///
+/// Used in `_proxy/successor/notification` when the proxy wants to forward a notification downstream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuccessorNotification<Req: JrNotification> {
+    /// The message to be sent to the successor component.
+    #[serde(flatten)]
+    pub notification: Req,
+
+    /// Optional metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
+}
+
+impl<Req: JrNotification> JrMessage for SuccessorNotification<Req> {
+    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
+        UntypedMessage::new(
+            SUCCESSOR_NOTIFICATION_METHOD,
+            SuccessorNotification {
+                notification: self.notification.to_untyped_message()?,
+                meta: self.meta.clone(),
+            },
+        )
+    }
+
+    fn method(&self) -> &str {
+        SUCCESSOR_NOTIFICATION_METHOD
+    }
+
+    fn parse_request(
+        _method: &str,
+        _params: &impl Serialize,
+    ) -> Option<Result<Self, crate::Error>> {
+        None // Notification, not request
+    }
+
+    fn parse_notification(
+        method: &str,
+        params: &impl Serialize,
+    ) -> Option<Result<Self, crate::Error>> {
+        if method == SUCCESSOR_NOTIFICATION_METHOD {
+            match crate::util::json_cast::<_, SuccessorNotification<UntypedMessage>>(params) {
+                Ok(outer) => match Req::parse_notification(
+                    &outer.notification.method,
+                    &outer.notification.params,
+                ) {
+                    Some(Ok(notification)) => Some(Ok(SuccessorNotification {
+                        notification,
+                        meta: outer.meta,
+                    })),
+                    Some(Err(err)) => Some(Err(err)),
+                    None => None,
+                },
+                Err(err) => Some(Err(err)),
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl<Req: JrNotification> JrNotification for SuccessorNotification<Req> {}
+
+// =============================================================================
+// MCP-over-ACP protocol
+// =============================================================================
 
 /// JSON-RPC method name for MCP connect requests
 pub const METHOD_MCP_CONNECT_REQUEST: &str = "_mcp/connect";
@@ -19,7 +155,7 @@ pub struct McpConnectRequest {
 }
 
 impl JrMessage for McpConnectRequest {
-    fn to_untyped_message(&self) -> Result<UntypedMessage, sacp::Error> {
+    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
         UntypedMessage::new(METHOD_MCP_CONNECT_REQUEST, self)
     }
 
@@ -27,17 +163,17 @@ impl JrMessage for McpConnectRequest {
         METHOD_MCP_CONNECT_REQUEST
     }
 
-    fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, sacp::Error>> {
+    fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != METHOD_MCP_CONNECT_REQUEST {
             return None;
         }
-        Some(sacp::util::json_cast(params))
+        Some(crate::util::json_cast(params))
     }
 
     fn parse_notification(
         _method: &str,
         _params: &impl Serialize,
-    ) -> Option<Result<Self, sacp::Error>> {
+    ) -> Option<Result<Self, crate::Error>> {
         // This is a request, not a notification
         None
     }
@@ -59,12 +195,12 @@ pub struct McpConnectResponse {
 }
 
 impl JrResponsePayload for McpConnectResponse {
-    fn into_json(self, _method: &str) -> Result<serde_json::Value, sacp::Error> {
-        serde_json::to_value(self).map_err(sacp::Error::into_internal_error)
+    fn into_json(self, _method: &str) -> Result<serde_json::Value, crate::Error> {
+        serde_json::to_value(self).map_err(crate::Error::into_internal_error)
     }
 
-    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, sacp::Error> {
-        serde_json::from_value(value).map_err(|_| sacp::Error::invalid_params())
+    fn from_value(_method: &str, value: serde_json::Value) -> Result<Self, crate::Error> {
+        serde_json::from_value(value).map_err(|_| crate::Error::invalid_params())
     }
 }
 
@@ -83,7 +219,7 @@ pub struct McpDisconnectNotification {
 }
 
 impl JrMessage for McpDisconnectNotification {
-    fn to_untyped_message(&self) -> Result<UntypedMessage, sacp::Error> {
+    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
         UntypedMessage::new(METHOD_MCP_DISCONNECT_NOTIFICATION, self)
     }
 
@@ -91,7 +227,10 @@ impl JrMessage for McpDisconnectNotification {
         METHOD_MCP_DISCONNECT_NOTIFICATION
     }
 
-    fn parse_request(_method: &str, _params: &impl Serialize) -> Option<Result<Self, sacp::Error>> {
+    fn parse_request(
+        _method: &str,
+        _params: &impl Serialize,
+    ) -> Option<Result<Self, crate::Error>> {
         // This is a notification, not a request
         None
     }
@@ -99,11 +238,11 @@ impl JrMessage for McpDisconnectNotification {
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
-    ) -> Option<Result<Self, sacp::Error>> {
+    ) -> Option<Result<Self, crate::Error>> {
         if method != METHOD_MCP_DISCONNECT_NOTIFICATION {
             return None;
         }
-        Some(sacp::util::json_cast(params))
+        Some(crate::util::json_cast(params))
     }
 }
 
@@ -132,7 +271,7 @@ pub struct McpOverAcpRequest<R> {
 }
 
 impl<R: JrRequest> JrMessage for McpOverAcpRequest<R> {
-    fn to_untyped_message(&self) -> Result<UntypedMessage, sacp::Error> {
+    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
         let message = self.request.to_untyped_message()?;
         UntypedMessage::new(
             METHOD_MCP_REQUEST,
@@ -148,9 +287,9 @@ impl<R: JrRequest> JrMessage for McpOverAcpRequest<R> {
         METHOD_MCP_REQUEST
     }
 
-    fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, sacp::Error>> {
+    fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method == METHOD_MCP_REQUEST {
-            match json_cast::<_, McpOverAcpRequest<UntypedMessage>>(params) {
+            match crate::util::json_cast::<_, McpOverAcpRequest<UntypedMessage>>(params) {
                 Ok(outer) => match R::parse_request(&outer.request.method, &outer.request.params) {
                     Some(Ok(request)) => Some(Ok(McpOverAcpRequest {
                         connection_id: outer.connection_id,
@@ -170,7 +309,7 @@ impl<R: JrRequest> JrMessage for McpOverAcpRequest<R> {
     fn parse_notification(
         _method: &str,
         _params: &impl Serialize,
-    ) -> Option<Result<Self, sacp::Error>> {
+    ) -> Option<Result<Self, crate::Error>> {
         None // Request, not notification
     }
 }
@@ -203,7 +342,7 @@ pub struct McpOverAcpNotification<R> {
 }
 
 impl<R: JrMessage> JrMessage for McpOverAcpNotification<R> {
-    fn to_untyped_message(&self) -> Result<UntypedMessage, sacp::Error> {
+    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
         let params = self.notification.to_untyped_message()?;
         UntypedMessage::new(
             METHOD_MCP_NOTIFICATION,
@@ -219,16 +358,19 @@ impl<R: JrMessage> JrMessage for McpOverAcpNotification<R> {
         METHOD_MCP_NOTIFICATION
     }
 
-    fn parse_request(_method: &str, _params: &impl Serialize) -> Option<Result<Self, sacp::Error>> {
+    fn parse_request(
+        _method: &str,
+        _params: &impl Serialize,
+    ) -> Option<Result<Self, crate::Error>> {
         None // Notification, not request
     }
 
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
-    ) -> Option<Result<Self, sacp::Error>> {
+    ) -> Option<Result<Self, crate::Error>> {
         if method == METHOD_MCP_NOTIFICATION {
-            match json_cast::<_, McpOverAcpNotification<UntypedMessage>>(params) {
+            match crate::util::json_cast::<_, McpOverAcpNotification<UntypedMessage>>(params) {
                 Ok(outer) => match R::parse_notification(
                     &outer.notification.method,
                     &outer.notification.params,

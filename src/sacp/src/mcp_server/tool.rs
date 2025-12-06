@@ -1,5 +1,9 @@
+//! MCP tool trait for defining tools.
+
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
+
+use super::McpContext;
 
 /// Defines an MCP tool.
 pub trait McpTool: Send + Sync {
@@ -24,6 +28,6 @@ pub trait McpTool: Send + Sync {
     fn call_tool(
         &self,
         input: Self::Input,
-        context: super::McpContext,
-    ) -> impl Future<Output = Result<Self::Output, sacp::Error>> + Send;
+        context: McpContext,
+    ) -> impl Future<Output = Result<Self::Output, crate::Error>> + Send;
 }

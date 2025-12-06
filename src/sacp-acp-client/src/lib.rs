@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use extension_trait::extension_trait;
+use sacp::mcp_server::McpServiceRegistry;
 use sacp::{JrConnectionCx, schema::NewSessionRequest};
-use sacp_proxy::McpServiceRegistry;
 
 #[extension_trait]
 pub impl AcpClient for JrConnectionCx {

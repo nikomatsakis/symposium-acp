@@ -3,9 +3,10 @@
 //! This proxy demonstrates basic proxy functionality by intercepting
 //! `session/update` notifications and prepending `>` to the content.
 
+use sacp::mcp_server::McpServiceRegistry;
+use sacp::proxy::AcpProxyExt;
 use sacp::schema::{ContentBlock, ContentChunk, SessionNotification, SessionUpdate};
 use sacp::{Component, JrHandlerChain};
-use sacp_proxy::{AcpProxyExt, McpServiceRegistry};
 
 /// Run the arrow proxy that adds `>` to each session update.
 ///
