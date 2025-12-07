@@ -81,7 +81,34 @@ pub trait SendsTo<R: JrRole, M>: SendsToRole<R> {}
 ///
 /// This is the default role used when no specific role is provided.
 /// It has full client and server capabilities.
+///
+/// `DefaultRole` can send any message to itself (pass-through), making it
+/// suitable for generic code that doesn't need role-specific behavior.
 #[derive(Debug, Default, Clone)]
 pub struct DefaultRole;
 
 impl JrRole for DefaultRole {}
+
+impl DefaultCounterpart for DefaultRole {
+    type Counterpart = DefaultRole;
+}
+
+impl SendsToRole<DefaultRole> for DefaultRole {
+    fn transform_request(
+        &self,
+        message: UntypedMessage,
+        _target: &DefaultRole,
+    ) -> Result<UntypedMessage, crate::Error> {
+        Ok(message)
+    }
+
+    fn transform_notification(
+        &self,
+        message: UntypedMessage,
+        _target: &DefaultRole,
+    ) -> Result<UntypedMessage, crate::Error> {
+        Ok(message)
+    }
+}
+
+impl<M> SendsTo<DefaultRole, M> for DefaultRole {}

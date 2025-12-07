@@ -557,7 +557,7 @@ impl<R: JrRole, H: JrMessageHandler<R>> JrHandlerChain<R, H> {
     /// ```
     /// # use sacp::JrHandlerChain;
     /// # use sacp::schema::{PromptRequest, PromptResponse, SessionNotification};
-    /// # fn example<R: sacp::JrRole, H: sacp::JrMessageHandler<R>>(connection: JrHandlerChain<R, H>) {
+    /// # fn example(connection: JrHandlerChain) {
     /// connection.on_receive_request(async |request: PromptRequest, request_cx| {
     ///     // Send a notification while processing
     ///     let notif: SessionNotification = todo!();
@@ -1222,6 +1222,9 @@ impl<R: JrRole> JrConnectionCx<R> {
         message: MessageAndCx<R2, Req, Notif>,
     ) -> Result<(), crate::Error>
     where
+        R: crate::DefaultCounterpart
+            + crate::SendsTo<R::Counterpart, Req>
+            + crate::SendsTo<R::Counterpart, Notif>,
         R2: JrRole,
         Req: JrRequest<Response: Send>,
         Notif: JrNotification,
@@ -1282,33 +1285,67 @@ impl<R: JrRole> JrConnectionCx<R> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn send_request<Req: JrRequest>(&self, request: Req) -> JrResponse<R, Req::Response> {
+    /// Send an outgoing request to the default counterpart role.
+    ///
+    /// This is a convenience method that uses the role's default counterpart.
+    /// For explicit control over the target role, use [`send_request_to`](Self::send_request_to).
+    pub fn send_request<Req: JrRequest>(&self, request: Req) -> JrResponse<R, Req::Response>
+    where
+        R: crate::DefaultCounterpart + crate::SendsTo<R::Counterpart, Req>,
+    {
+        self.send_request_to(&<R::Counterpart>::default(), request)
+    }
+
+    /// Send an outgoing request to a specific counterpart role.
+    ///
+    /// The message will be transformed according to the role's [`SendsToRole`](crate::SendsToRole)
+    /// implementation before being sent.
+    pub fn send_request_to<C: JrRole, Req: JrRequest>(
+        &self,
+        counterpart: &C,
+        request: Req,
+    ) -> JrResponse<R, Req::Response>
+    where
+        R: crate::SendsTo<C, Req>,
+    {
         let method = request.method().to_string();
         let (response_tx, response_rx) = oneshot::channel();
         match request.to_untyped_message() {
             Ok(untyped) => {
-                let params = crate::util::json_cast(untyped.params).ok();
-                let message = OutgoingMessage::Request {
-                    method: method.clone(),
-                    params,
-                    response_tx,
-                };
-
-                match self.message_tx.unbounded_send(message) {
-                    Ok(()) => (),
-                    Err(error) => {
-                        let OutgoingMessage::Request {
-                            method,
+                // Transform the message for the target role
+                match self.role.transform_request(untyped, counterpart) {
+                    Ok(transformed) => {
+                        let params = crate::util::json_cast(transformed.params).ok();
+                        let message = OutgoingMessage::Request {
+                            method: transformed.method.clone(),
+                            params,
                             response_tx,
-                            ..
-                        } = error.into_inner()
-                        else {
-                            unreachable!();
                         };
 
+                        match self.message_tx.unbounded_send(message) {
+                            Ok(()) => (),
+                            Err(error) => {
+                                let OutgoingMessage::Request {
+                                    method,
+                                    response_tx,
+                                    ..
+                                } = error.into_inner()
+                                else {
+                                    unreachable!();
+                                };
+
+                                response_tx
+                                    .send(Err(communication_failure(format!(
+                                        "failed to send outgoing request `{method}"
+                                    ))))
+                                    .unwrap();
+                            }
+                        }
+                    }
+                    Err(e) => {
                         response_tx
                             .send(Err(communication_failure(format!(
-                                "failed to send outgoing request `{method}"
+                                "failed to transform request `{method}`: {e}"
                             ))))
                             .unwrap();
                     }
@@ -1328,10 +1365,13 @@ impl<R: JrRole> JrConnectionCx<R> {
             .map(move |json| <Req::Response>::from_value(&method, json))
     }
 
-    /// Send an outgoing notification (no reply expected).
+    /// Send an outgoing notification to the default counterpart role (no reply expected).
     ///
     /// Notifications are fire-and-forget messages that don't have IDs and don't expect responses.
     /// This method sends the notification immediately and returns.
+    ///
+    /// This is a convenience method that uses the role's default counterpart.
+    /// For explicit control over the target role, use [`send_notification_to`](Self::send_notification_to).
     ///
     /// ```no_run
     /// # use sacp_test::*;
@@ -1342,14 +1382,30 @@ impl<R: JrRole> JrConnectionCx<R> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn send_notification<N: JrNotification>(
+    pub fn send_notification<N: JrNotification>(&self, notification: N) -> Result<(), crate::Error>
+    where
+        R: crate::DefaultCounterpart + crate::SendsTo<R::Counterpart, N>,
+    {
+        self.send_notification_to(&<R::Counterpart>::default(), notification)
+    }
+
+    /// Send an outgoing notification to a specific counterpart role (no reply expected).
+    ///
+    /// The message will be transformed according to the role's [`SendsToRole`](crate::SendsToRole)
+    /// implementation before being sent.
+    pub fn send_notification_to<C: JrRole, N: JrNotification>(
         &self,
+        counterpart: &C,
         notification: N,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<(), crate::Error>
+    where
+        R: crate::SendsTo<C, N>,
+    {
         let untyped = notification.to_untyped_message()?;
-        let params = crate::util::json_cast(untyped.params).ok();
+        let transformed = self.role.transform_notification(untyped, counterpart)?;
+        let params = crate::util::json_cast(transformed.params).ok();
         self.send_raw_message(OutgoingMessage::Notification {
-            method: untyped.method,
+            method: transformed.method,
             params,
         })
     }
