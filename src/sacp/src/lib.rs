@@ -31,7 +31,7 @@
 //!         meta: Default::default(),
 //!     })
 //! })
-//! .on_receive_message(async move |message: MessageAndCx<UntypedMessage, UntypedMessage>| {
+//! .on_receive_message(async move |message: MessageAndCx| {
 //!     // You can also handle any kind of message:
 //!     message.respond_with_error(sacp::util::internal_error("TODO"))
 //! })

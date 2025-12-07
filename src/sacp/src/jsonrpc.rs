@@ -178,7 +178,7 @@ pub trait JrMessageHandlerSend<R: JrRole = DefaultRole>: Send {
 /// # async fn example() -> Result<(), sacp::Error> {
 /// # let connection = mock_connection();
 /// // on_receive_message receives MessageAndCx which can be either a request or notification
-/// connection.on_receive_message(async |msg: MessageAndCx<InitializeRequest, SessionNotification>| {
+/// connection.on_receive_message(async |msg: MessageAndCx<_, InitializeRequest, SessionNotification>| {
 ///     match msg {
 ///         MessageAndCx::Request(req, request_cx) => {
 ///             request_cx.respond(InitializeResponse::make())
@@ -495,7 +495,7 @@ impl<R: JrRole, H: JrMessageHandler<R>> JrHandlerChain<R, H> {
     /// Register a handler for messages that can be either requests OR notifications.
     ///
     /// Use this when you want to handle an enum type that contains both request and
-    /// notification variants. Your handler receives a [`MessageAndCx<Req, Notif, R>`] which
+    /// notification variants. Your handler receives a [`MessageAndCx<R, Req, Notif>`] which
     /// is an enum with two variants:
     ///
     /// - `MessageAndCx::Request(request, request_cx)` - A request with its response context
@@ -508,7 +508,7 @@ impl<R: JrRole, H: JrMessageHandler<R>> JrHandlerChain<R, H> {
     /// # use sacp::MessageAndCx;
     /// # async fn example() -> Result<(), sacp::Error> {
     /// # let connection = mock_connection();
-    /// connection.on_receive_message(async |message: MessageAndCx<MyRequest, StatusUpdate>| {
+    /// connection.on_receive_message(async |message: MessageAndCx<_, MyRequest, StatusUpdate>| {
     ///     match message {
     ///         MessageAndCx::Request(req, request_cx) => {
     ///             // Handle request and send response
@@ -557,7 +557,7 @@ impl<R: JrRole, H: JrMessageHandler<R>> JrHandlerChain<R, H> {
     /// ```
     /// # use sacp::JrHandlerChain;
     /// # use sacp::schema::{PromptRequest, PromptResponse, SessionNotification};
-    /// # fn example(connection: JrHandlerChain<impl sacp::JrMessageHandler>) {
+    /// # fn example<R: sacp::JrRole, H: sacp::JrMessageHandler<R>>(connection: JrHandlerChain<R, H>) {
     /// connection.on_receive_request(async |request: PromptRequest, request_cx| {
     ///     // Send a notification while processing
     ///     let notif: SessionNotification = todo!();

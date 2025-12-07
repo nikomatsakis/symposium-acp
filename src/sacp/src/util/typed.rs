@@ -24,12 +24,12 @@ use crate::{
 /// # Example
 ///
 /// ```
-/// # use sacp::{MessageAndCx};
+/// # use sacp::{MessageAndCx, DefaultRole};
 /// # use sacp::schema::{InitializeRequest, InitializeResponse, PromptRequest, PromptResponse};
 /// # use sacp::util::MatchMessage;
 /// # async fn example(message: MessageAndCx) -> Result<(), sacp::Error> {
 /// MatchMessage::new(message)
-///     .if_request(|req: InitializeRequest, cx: sacp::JrRequestCx<InitializeResponse>| async move {
+///     .if_request(|req: InitializeRequest, cx: sacp::JrRequestCx<DefaultRole, InitializeResponse>| async move {
 ///         // Handle initialization
 ///         let response = InitializeResponse {
 ///             protocol_version: req.protocol_version,
@@ -41,7 +41,7 @@ use crate::{
 ///         cx.respond(response)
 ///     })
 ///     .await
-///     .if_request(|req: PromptRequest, cx: sacp::JrRequestCx<PromptResponse>| async move {
+///     .if_request(|req: PromptRequest, cx: sacp::JrRequestCx<DefaultRole, PromptResponse>| async move {
 ///         // Handle prompts
 ///         let response = PromptResponse {
 ///             stop_reason: sacp::schema::StopReason::EndTurn,
