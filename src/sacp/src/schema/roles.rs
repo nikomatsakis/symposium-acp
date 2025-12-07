@@ -7,8 +7,32 @@
 
 use crate::{
     JrMessage,
-    role::{DefaultCounterpart, JrRole, SendsToRole},
-    schema::{SuccessorNotification, SuccessorRequest},
+    role::{DefaultCounterpart, JrRole, SendsTo, SendsToRole},
+    schema::{
+        // Client → Agent requests
+        AuthenticateRequest,
+        // Client → Agent notifications
+        CancelNotification,
+        // Agent → Client requests
+        CreateTerminalRequest,
+        InitializeRequest,
+        KillTerminalCommandRequest,
+        LoadSessionRequest,
+        NewSessionRequest,
+        PromptRequest,
+        ReadTextFileRequest,
+        ReleaseTerminalRequest,
+        RequestPermissionRequest,
+        // Agent → Client notifications
+        SessionNotification,
+        SetSessionModeRequest,
+        // Proxy protocol
+        SuccessorNotification,
+        SuccessorRequest,
+        TerminalOutputRequest,
+        WaitForTerminalExitRequest,
+        WriteTextFileRequest,
+    },
 };
 
 /// The ACP client role (e.g., an IDE or editor).
@@ -136,3 +160,41 @@ impl SendsToRole<AcpAgent> for AcpProxy {
         .to_untyped_message()
     }
 }
+
+// ============================================================================
+// SendsTo marker trait implementations
+// ============================================================================
+
+// Client → Agent requests
+impl SendsTo<AcpAgent, InitializeRequest> for AcpClient {}
+impl SendsTo<AcpAgent, AuthenticateRequest> for AcpClient {}
+impl SendsTo<AcpAgent, NewSessionRequest> for AcpClient {}
+impl SendsTo<AcpAgent, LoadSessionRequest> for AcpClient {}
+impl SendsTo<AcpAgent, PromptRequest> for AcpClient {}
+impl SendsTo<AcpAgent, SetSessionModeRequest> for AcpClient {}
+
+// Client → Agent notifications
+impl SendsTo<AcpAgent, CancelNotification> for AcpClient {}
+
+// Agent → Client requests
+impl SendsTo<AcpClient, RequestPermissionRequest> for AcpAgent {}
+impl SendsTo<AcpClient, ReadTextFileRequest> for AcpAgent {}
+impl SendsTo<AcpClient, WriteTextFileRequest> for AcpAgent {}
+impl SendsTo<AcpClient, CreateTerminalRequest> for AcpAgent {}
+impl SendsTo<AcpClient, TerminalOutputRequest> for AcpAgent {}
+impl SendsTo<AcpClient, ReleaseTerminalRequest> for AcpAgent {}
+impl SendsTo<AcpClient, WaitForTerminalExitRequest> for AcpAgent {}
+impl SendsTo<AcpClient, KillTerminalCommandRequest> for AcpAgent {}
+
+// Agent → Client notifications
+impl SendsTo<AcpClient, SessionNotification> for AcpAgent {}
+
+// Proxy → Agent: proxy can send anything to agent that client can send
+impl<M> SendsTo<AcpAgent, M> for AcpProxy where AcpClient: SendsTo<AcpAgent, M> {}
+
+// Proxy → Client: proxy can send anything to client that agent can send
+impl<M> SendsTo<AcpClient, M> for AcpProxy where AcpAgent: SendsTo<AcpClient, M> {}
+
+// UntypedMessage can be sent in either direction (for generic code)
+impl SendsTo<AcpAgent, crate::UntypedMessage> for AcpClient {}
+impl SendsTo<AcpClient, crate::UntypedMessage> for AcpAgent {}
