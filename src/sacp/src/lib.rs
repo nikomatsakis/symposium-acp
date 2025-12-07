@@ -201,7 +201,7 @@ pub use jsonrpc::{
     JrResponse, JrResponsePayload, Lines, MessageAndCx, UntypedMessage,
 };
 
-pub use role::{DefaultRole, JrRole};
+pub use role::{DefaultCounterpart, DefaultRole, JrRole, ReceivesFromRole, SendsTo, SendsToRole};
 
 pub use component::{Component, DynComponent};
 
