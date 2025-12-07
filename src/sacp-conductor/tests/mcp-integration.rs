@@ -14,16 +14,16 @@ use sacp::schema::{
     ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, SessionNotification,
     TextContent,
 };
-use sacp_conductor::McpBridgeMode;
 use sacp_conductor::Conductor;
+use sacp_conductor::McpBridgeMode;
 
 use tokio::io::duplex;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to receive a JSON-RPC response
-async fn recv<R: sacp::JrResponsePayload + Send>(
-    response: sacp::JrResponse<R>,
-) -> Result<R, sacp::Error> {
+async fn recv<T: sacp::JrResponsePayload + Send>(
+    response: sacp::JrResponse<sacp::DefaultRole, T>,
+) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
         tx.send(result).map_err(|_| sacp::Error::internal_error())

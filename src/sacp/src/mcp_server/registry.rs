@@ -11,8 +11,8 @@ use crate::schema::{
 };
 use crate::util::MatchMessage;
 use crate::{
-    Channel, Component, DynComponent, Handled, JrConnectionCx, JrHandlerChain, JrMessageHandler,
-    JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
+    Channel, Component, DefaultRole, DynComponent, Handled, JrConnectionCx, JrHandlerChain,
+    JrMessageHandler, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
 };
 use std::sync::{Arc, Mutex};
 
@@ -219,16 +219,25 @@ impl McpServiceRegistry {
         }
     }
 
-    async fn handle_successor_request<R: JrRequest>(
+    async fn handle_successor_request<Req: JrRequest>(
         &self,
-        successor_request: SuccessorRequest<R>,
-        request_cx: JrRequestCx<R::Response>,
+        successor_request: SuccessorRequest<Req>,
+        request_cx: JrRequestCx<DefaultRole, Req::Response>,
         op: impl AsyncFnOnce(
             &Self,
-            R,
-            JrRequestCx<R::Response>,
-        ) -> Result<Handled<(R, JrRequestCx<R::Response>)>, crate::Error>,
-    ) -> Result<Handled<(SuccessorRequest<R>, JrRequestCx<R::Response>)>, crate::Error> {
+            Req,
+            JrRequestCx<DefaultRole, Req::Response>,
+        ) -> Result<
+            Handled<(Req, JrRequestCx<DefaultRole, Req::Response>)>,
+            crate::Error,
+        >,
+    ) -> Result<
+        Handled<(
+            SuccessorRequest<Req>,
+            JrRequestCx<DefaultRole, Req::Response>,
+        )>,
+        crate::Error,
+    > {
         match op(self, successor_request.request, request_cx).await? {
             Handled::Yes => Ok(Handled::Yes),
             Handled::No((request, cx)) => Ok(Handled::No((
@@ -244,8 +253,14 @@ impl McpServiceRegistry {
     async fn handle_connect_request(
         &self,
         request: McpConnectRequest,
-        request_cx: JrRequestCx<McpConnectResponse>,
-    ) -> Result<Handled<(McpConnectRequest, JrRequestCx<McpConnectResponse>)>, crate::Error> {
+        request_cx: JrRequestCx<DefaultRole, McpConnectResponse>,
+    ) -> Result<
+        Handled<(
+            McpConnectRequest,
+            JrRequestCx<DefaultRole, McpConnectResponse>,
+        )>,
+        crate::Error,
+    > {
         let outer_cx = request_cx.connection_cx();
 
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
@@ -336,11 +351,11 @@ impl McpServiceRegistry {
     async fn handle_mcp_over_acp_request(
         &self,
         request: McpOverAcpRequest<UntypedMessage>,
-        request_cx: JrRequestCx<serde_json::Value>,
+        request_cx: JrRequestCx<DefaultRole, serde_json::Value>,
     ) -> Result<
         Handled<(
             McpOverAcpRequest<UntypedMessage>,
-            JrRequestCx<serde_json::Value>,
+            JrRequestCx<DefaultRole, serde_json::Value>,
         )>,
         crate::Error,
     > {
@@ -417,8 +432,14 @@ impl McpServiceRegistry {
     async fn handle_new_session_request(
         &self,
         mut request: NewSessionRequest,
-        request_cx: JrRequestCx<NewSessionResponse>,
-    ) -> Result<Handled<(NewSessionRequest, JrRequestCx<NewSessionResponse>)>, crate::Error> {
+        request_cx: JrRequestCx<DefaultRole, NewSessionResponse>,
+    ) -> Result<
+        Handled<(
+            NewSessionRequest,
+            JrRequestCx<DefaultRole, NewSessionResponse>,
+        )>,
+        crate::Error,
+    > {
         // Add the MCP servers into the session/new request.
         //
         // Q: Do we care if there are already servers with that name?

@@ -1,5 +1,5 @@
 use sacp::schema::{AgentCapabilities, InitializeRequest, InitializeResponse};
-use sacp::{JrHandlerChain, MessageAndCx, UntypedMessage};
+use sacp::{DefaultRole, JrHandlerChain, MessageAndCx, UntypedMessage};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[tokio::main]
@@ -22,7 +22,7 @@ async fn main() -> Result<(), sacp::Error> {
             })
         })
         .on_receive_message(
-            async move |message: MessageAndCx<UntypedMessage, UntypedMessage>| {
+            async move |message: MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>| {
                 // Respond to any other message with an error
                 message.respond_with_error(sacp::util::internal_error("TODO"))
             },

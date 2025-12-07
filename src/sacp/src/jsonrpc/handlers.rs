@@ -19,25 +19,19 @@ impl<R: JrRole> JrMessageHandler<R> for NullHandler {
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error> {
+        message: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error> {
         Ok(Handled::No(message))
     }
 }
 
 /// Handler for typed request messages
-pub struct RequestHandler<Req, F, R: JrRole = DefaultRole>
-where
-    Req: JrRequest,
-{
+pub struct RequestHandler<R: JrRole = DefaultRole, Req: JrRequest = UntypedMessage, F = ()> {
     handler: F,
-    phantom: PhantomData<fn(Req, R)>,
+    phantom: PhantomData<fn(R, Req)>,
 }
 
-impl<Req, F, R: JrRole> RequestHandler<Req, F, R>
-where
-    Req: JrRequest,
-{
+impl<R: JrRole, Req: JrRequest, F> RequestHandler<R, Req, F> {
     /// Creates a new request handler
     pub fn new(handler: F) -> Self {
         Self {
@@ -47,12 +41,12 @@ where
     }
 }
 
-impl<Req, F, T, R> JrMessageHandler<R> for RequestHandler<Req, F, R>
+impl<R, Req, F, T> JrMessageHandler<R> for RequestHandler<R, Req, F>
 where
     R: JrRole,
     Req: JrRequest,
-    F: AsyncFnMut(Req, JrRequestCx<Req::Response, R>) -> Result<T, crate::Error>,
-    T: crate::IntoHandled<(Req, JrRequestCx<Req::Response, R>)>,
+    F: AsyncFnMut(Req, JrRequestCx<R, Req::Response>) -> Result<T, crate::Error>,
+    T: crate::IntoHandled<(Req, JrRequestCx<R, Req::Response>)>,
 {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         std::any::type_name::<Req>()
@@ -60,8 +54,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error> {
+        message_cx: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error> {
         match message_cx {
             MessageAndCx::Request(message, request_cx) => {
                 tracing::debug!(
@@ -103,18 +97,16 @@ where
 }
 
 /// Handler for typed notification messages
-pub struct NotificationHandler<Notif, F, R: JrRole = DefaultRole>
-where
-    Notif: JrNotification,
-{
+pub struct NotificationHandler<
+    R: JrRole = DefaultRole,
+    Notif: JrNotification = UntypedMessage,
+    F = (),
+> {
     handler: F,
-    phantom: PhantomData<fn(Notif, R)>,
+    phantom: PhantomData<fn(R, Notif)>,
 }
 
-impl<Notif, F, R: JrRole> NotificationHandler<Notif, F, R>
-where
-    Notif: JrNotification,
-{
+impl<R: JrRole, Notif: JrNotification, F> NotificationHandler<R, Notif, F> {
     /// Creates a new notification handler
     pub fn new(handler: F) -> Self {
         Self {
@@ -124,7 +116,7 @@ where
     }
 }
 
-impl<Notif, F, T, R> JrMessageHandler<R> for NotificationHandler<Notif, F, R>
+impl<R, Notif, F, T> JrMessageHandler<R> for NotificationHandler<R, Notif, F>
 where
     R: JrRole,
     Notif: JrNotification,
@@ -137,8 +129,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error> {
+        message_cx: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error> {
         match message_cx {
             MessageAndCx::Notification(message, cx) => {
                 tracing::debug!(
@@ -182,21 +174,20 @@ where
 }
 
 /// Handler that handles both requests and notifications of specific types.
-pub struct MessageHandler<Req, Notif, F, R: JrRole = DefaultRole>
-where
-    Req: JrRequest,
-    Notif: JrNotification,
-{
+pub struct MessageHandler<
+    R: JrRole = DefaultRole,
+    Req: JrRequest = UntypedMessage,
+    Notif: JrNotification = UntypedMessage,
+    F = (),
+> {
     handler: F,
-    phantom: PhantomData<fn(Req, Notif, R)>,
+    phantom: PhantomData<fn(R, Req, Notif)>,
 }
 
-impl<Req, Notif, F, T, R: JrRole> MessageHandler<Req, Notif, F, R>
+impl<R: JrRole, Req: JrRequest, Notif: JrNotification, F, T> MessageHandler<R, Req, Notif, F>
 where
-    Req: JrRequest,
-    Notif: JrNotification,
-    F: AsyncFnMut(MessageAndCx<Req, Notif, R>) -> Result<T, crate::Error>,
-    T: IntoHandled<MessageAndCx<Req, Notif, R>>,
+    F: AsyncFnMut(MessageAndCx<R, Req, Notif>) -> Result<T, crate::Error>,
+    T: IntoHandled<MessageAndCx<R, Req, Notif>>,
 {
     /// Creates a new message handler
     pub fn new(handler: F) -> Self {
@@ -207,13 +198,13 @@ where
     }
 }
 
-impl<Req, Notif, F, T, R> JrMessageHandler<R> for MessageHandler<Req, Notif, F, R>
+impl<R, Req, Notif, F, T> JrMessageHandler<R> for MessageHandler<R, Req, Notif, F>
 where
     R: JrRole,
     Req: JrRequest,
     Notif: JrNotification,
-    F: AsyncFnMut(MessageAndCx<Req, Notif, R>) -> Result<T, crate::Error>,
-    T: IntoHandled<MessageAndCx<Req, Notif, R>>,
+    F: AsyncFnMut(MessageAndCx<R, Req, Notif>) -> Result<T, crate::Error>,
+    T: IntoHandled<MessageAndCx<R, Req, Notif>>,
 {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         format!(
@@ -225,8 +216,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error> {
+        message_cx: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error> {
         match message_cx {
             MessageAndCx::Request(message, request_cx) => {
                 tracing::debug!(
@@ -331,8 +322,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error> {
+        message: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error> {
         if let Some(name) = &self.name {
             crate::util::instrumented_with_connection_name(
                 name.clone(),
@@ -374,8 +365,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error> {
+        message: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error> {
         match self.handler1.handle_message(message).await? {
             Handled::Yes => Ok(Handled::Yes),
             Handled::No(message) => self.handler2.handle_message(message).await,

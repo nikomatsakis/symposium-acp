@@ -6,12 +6,16 @@
 //! - Out-of-order response handling
 
 use futures::{AsyncRead, AsyncWrite};
-use sacp::{JrHandlerChain, JrMessage, JrRequest, JrRequestCx, JrResponse, JrResponsePayload};
+use sacp::{
+    DefaultRole, JrHandlerChain, JrMessage, JrRequest, JrRequestCx, JrResponse, JrResponsePayload,
+};
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
-async fn recv<R: JrResponsePayload + Send>(response: JrResponse<R>) -> Result<R, sacp::Error> {
+async fn recv<T: JrResponsePayload + Send>(
+    response: JrResponse<DefaultRole, T>,
+) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
         tx.send(result).map_err(|_| sacp::Error::internal_error())
@@ -165,7 +169,7 @@ async fn test_bidirectional_communication() {
 
             let side_a_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let side_a = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<PongResponse>| {
+                async |request: PingRequest, request_cx: JrRequestCx<DefaultRole, PongResponse>| {
                     request_cx.respond(PongResponse {
                         value: request.value + 1,
                     })
@@ -216,7 +220,7 @@ async fn test_request_ids() {
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<PongResponse>| {
+                async |request: PingRequest, request_cx: JrRequestCx<DefaultRole, PongResponse>| {
                     request_cx.respond(PongResponse {
                         value: request.value + 1,
                     })
@@ -275,7 +279,7 @@ async fn test_out_of_order_responses() {
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
-                async |request: SlowRequest, request_cx: JrRequestCx<SlowResponse>| {
+                async |request: SlowRequest, request_cx: JrRequestCx<DefaultRole, SlowResponse>| {
                     // Simulate delay
                     tokio::time::sleep(tokio::time::Duration::from_millis(request.delay_ms)).await;
                     request_cx.respond(SlowResponse { id: request.id })

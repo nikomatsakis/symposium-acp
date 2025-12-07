@@ -53,10 +53,10 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     fn on_receive_request_from_successor<R, F>(
         self,
         op: F,
-    ) -> JrHandlerChain<ChainedHandler<H, RequestFromSuccessorHandler<R, F>>>
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, RequestFromSuccessorHandler<R, F>>>
     where
         R: JrRequest,
-        F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>;
+        F: AsyncFnMut(R, JrRequestCx<DefaultRole, R::Response>) -> Result<(), crate::Error>;
 
     /// Adds a handler for notifications received from the successor component.
     ///
@@ -67,10 +67,10 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     fn on_receive_notification_from_successor<N, F>(
         self,
         op: F,
-    ) -> JrHandlerChain<ChainedHandler<H, NotificationFromSuccessorHandler<N, F>>>
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JrNotification,
-        F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>;
+        F: AsyncFnMut(N, JrConnectionCx<DefaultRole>) -> Result<(), crate::Error>;
 
     /// Adds a handler for messages received from the successor component.
     ///
@@ -81,15 +81,15 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     fn on_receive_message_from_successor<R, N, F>(
         self,
         op: F,
-    ) -> JrHandlerChain<ChainedHandler<H, MessageFromSuccessorHandler<R, N, F>>>
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, MessageFromSuccessorHandler<R, N, F>>>
     where
         R: JrRequest,
         N: JrNotification,
-        F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>;
+        F: AsyncFnMut(MessageAndCx<DefaultRole, R, N>) -> Result<(), crate::Error>;
 
     /// Installs a proxy layer that proxies all requests/notifications to/from the successor.
     /// This is typically the last component in the chain.
-    fn proxy(self) -> JrHandlerChain<ChainedHandler<H, ProxyHandler>>;
+    fn proxy(self) -> JrHandlerChain<DefaultRole, ChainedHandler<H, ProxyHandler>>;
 
     /// Provide MCP servers to downstream successors.
     /// This layer will modify `session/new` requests to include those MCP servers
@@ -97,17 +97,17 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     fn provide_mcp(
         self,
         registry: impl AsRef<McpServiceRegistry>,
-    ) -> JrHandlerChain<ChainedHandler<H, McpServiceRegistry>>;
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, McpServiceRegistry>>;
 }
 
-impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<H> {
+impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<DefaultRole, H> {
     fn on_receive_request_from_successor<R, F>(
         self,
         op: F,
-    ) -> JrHandlerChain<ChainedHandler<H, RequestFromSuccessorHandler<R, F>>>
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, RequestFromSuccessorHandler<R, F>>>
     where
         R: JrRequest,
-        F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
+        F: AsyncFnMut(R, JrRequestCx<DefaultRole, R::Response>) -> Result<(), crate::Error>,
     {
         self.with_handler(RequestFromSuccessorHandler::new(op))
     }
@@ -115,10 +115,10 @@ impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<H> {
     fn on_receive_notification_from_successor<N, F>(
         self,
         op: F,
-    ) -> JrHandlerChain<ChainedHandler<H, NotificationFromSuccessorHandler<N, F>>>
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, NotificationFromSuccessorHandler<N, F>>>
     where
         N: JrNotification,
-        F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
+        F: AsyncFnMut(N, JrConnectionCx<DefaultRole>) -> Result<(), crate::Error>,
     {
         self.with_handler(NotificationFromSuccessorHandler::new(op))
     }
@@ -126,23 +126,23 @@ impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<H> {
     fn on_receive_message_from_successor<R, N, F>(
         self,
         op: F,
-    ) -> JrHandlerChain<ChainedHandler<H, MessageFromSuccessorHandler<R, N, F>>>
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, MessageFromSuccessorHandler<R, N, F>>>
     where
         R: JrRequest,
         N: JrNotification,
-        F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
+        F: AsyncFnMut(MessageAndCx<DefaultRole, R, N>) -> Result<(), crate::Error>,
     {
         self.with_handler(MessageFromSuccessorHandler::new(op))
     }
 
-    fn proxy(self) -> JrHandlerChain<ChainedHandler<H, ProxyHandler>> {
+    fn proxy(self) -> JrHandlerChain<DefaultRole, ChainedHandler<H, ProxyHandler>> {
         self.with_handler(ProxyHandler {})
     }
 
     fn provide_mcp(
         self,
         registry: impl AsRef<McpServiceRegistry>,
-    ) -> JrHandlerChain<ChainedHandler<H, McpServiceRegistry>> {
+    ) -> JrHandlerChain<DefaultRole, ChainedHandler<H, McpServiceRegistry>> {
         self.with_handler(registry.as_ref().clone())
     }
 }
@@ -161,7 +161,7 @@ pub trait JrCxExt {
     fn send_request_to_successor<Req: JrRequest>(
         &self,
         request: Req,
-    ) -> crate::JrResponse<Req::Response>;
+    ) -> crate::JrResponse<DefaultRole, Req::Response>;
 
     /// Send a notification to the successor component.
     ///
@@ -176,11 +176,11 @@ pub trait JrCxExt {
     ) -> Result<(), crate::Error>;
 }
 
-impl JrCxExt for JrConnectionCx {
+impl JrCxExt for JrConnectionCx<DefaultRole> {
     fn send_request_to_successor<Req: JrRequest>(
         &self,
         request: Req,
-    ) -> crate::JrResponse<Req::Response> {
+    ) -> crate::JrResponse<DefaultRole, Req::Response> {
         let wrapper = SuccessorRequest {
             request,
             meta: None,
@@ -209,7 +209,7 @@ pub struct MessageFromSuccessorHandler<R, N, F>
 where
     R: JrRequest,
     N: JrNotification,
-    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
+    F: AsyncFnMut(MessageAndCx<DefaultRole, R, N>) -> Result<(), crate::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(R, N)>,
@@ -219,7 +219,7 @@ impl<R, N, F> MessageFromSuccessorHandler<R, N, F>
 where
     R: JrRequest,
     N: JrNotification,
-    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
+    F: AsyncFnMut(MessageAndCx<DefaultRole, R, N>) -> Result<(), crate::Error>,
 {
     /// Creates a new handler for requests from the successor
     pub fn new(handler: F) -> Self {
@@ -234,7 +234,7 @@ impl<R, N, F> JrMessageHandler for MessageFromSuccessorHandler<R, N, F>
 where
     R: JrRequest,
     N: JrNotification,
-    F: AsyncFnMut(MessageAndCx<R, N>) -> Result<(), crate::Error>,
+    F: AsyncFnMut(MessageAndCx<DefaultRole, R, N>) -> Result<(), crate::Error>,
 {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         std::any::type_name::<R>()
@@ -242,8 +242,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+        message: MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>>, crate::Error>
     {
         match message {
             MessageAndCx::Request(request, request_cx) => {
@@ -319,7 +319,7 @@ where
 pub struct RequestFromSuccessorHandler<R, F>
 where
     R: JrRequest,
-    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
+    F: AsyncFnMut(R, JrRequestCx<DefaultRole, R::Response>) -> Result<(), crate::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(R)>,
@@ -328,7 +328,7 @@ where
 impl<R, F> RequestFromSuccessorHandler<R, F>
 where
     R: JrRequest,
-    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
+    F: AsyncFnMut(R, JrRequestCx<DefaultRole, R::Response>) -> Result<(), crate::Error>,
 {
     /// Creates a new handler for requests from the successor
     pub fn new(handler: F) -> Self {
@@ -342,7 +342,7 @@ where
 impl<R, F> JrMessageHandler for RequestFromSuccessorHandler<R, F>
 where
     R: JrRequest,
-    F: AsyncFnMut(R, JrRequestCx<R::Response>) -> Result<(), crate::Error>,
+    F: AsyncFnMut(R, JrRequestCx<DefaultRole, R::Response>) -> Result<(), crate::Error>,
 {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         std::any::type_name::<R>()
@@ -350,8 +350,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+        message: MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>>, crate::Error>
     {
         let MessageAndCx::Request(request, cx) = message else {
             return Ok(Handled::No(message));
@@ -384,7 +384,7 @@ where
 pub struct NotificationFromSuccessorHandler<N, F>
 where
     N: JrNotification,
-    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
+    F: AsyncFnMut(N, JrConnectionCx<DefaultRole>) -> Result<(), crate::Error>,
 {
     handler: F,
     phantom: PhantomData<fn(N)>,
@@ -393,7 +393,7 @@ where
 impl<N, F> NotificationFromSuccessorHandler<N, F>
 where
     N: JrNotification,
-    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
+    F: AsyncFnMut(N, JrConnectionCx<DefaultRole>) -> Result<(), crate::Error>,
 {
     /// Creates a new handler for notifications from the successor
     pub fn new(handler: F) -> Self {
@@ -407,7 +407,7 @@ where
 impl<N, F> JrMessageHandler for NotificationFromSuccessorHandler<N, F>
 where
     N: JrNotification,
-    F: AsyncFnMut(N, JrConnectionCx) -> Result<(), crate::Error>,
+    F: AsyncFnMut(N, JrConnectionCx<DefaultRole>) -> Result<(), crate::Error>,
 {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         format!("FromSuccessor<{}>", std::any::type_name::<N>())
@@ -415,8 +415,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+        message: MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>>, crate::Error>
     {
         let MessageAndCx::Notification(notif_message, cx) = message else {
             return Ok(Handled::No(message));
@@ -459,8 +459,8 @@ impl JrMessageHandler for ProxyHandler {
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>,
-    ) -> Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, DefaultRole>>, crate::Error>
+        message: MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<DefaultRole, UntypedMessage, UntypedMessage>>, crate::Error>
     {
         tracing::debug!(
             message = ?message.message(),
@@ -531,7 +531,7 @@ impl ProxyHandler {
     async fn forward_initialize(
         &mut self,
         mut request: InitializeRequest,
-        request_cx: JrRequestCx<InitializeResponse>,
+        request_cx: JrRequestCx<DefaultRole, InitializeResponse>,
     ) -> Result<(), crate::Error> {
         tracing::debug!(
             method = request_cx.method(),

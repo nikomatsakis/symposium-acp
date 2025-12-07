@@ -8,8 +8,8 @@ use crate::{Handled, MessageAndCx, UntypedMessage, jsonrpc::JrMessageHandlerSend
 pub(crate) trait DynamicHandler<R: JrRole = DefaultRole>: Send {
     fn dyn_handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error>>;
+        message: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error>>;
 
     fn dyn_describe_chain(&self) -> String;
 }
@@ -17,8 +17,8 @@ pub(crate) trait DynamicHandler<R: JrRole = DefaultRole>: Send {
 impl<H: JrMessageHandlerSend<R>, R: JrRole> DynamicHandler<R> for H {
     fn dyn_handle_message(
         &mut self,
-        message: MessageAndCx<UntypedMessage, UntypedMessage, R>,
-    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<UntypedMessage, UntypedMessage, R>>, crate::Error>>
+        message: MessageAndCx<R, UntypedMessage, UntypedMessage>,
+    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<R, UntypedMessage, UntypedMessage>>, crate::Error>>
     {
         Box::pin(JrMessageHandlerSend::handle_message(self, message))
     }

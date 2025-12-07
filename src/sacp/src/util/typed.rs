@@ -9,6 +9,7 @@ use jsonrpcmsg::Params;
 
 use crate::{
     Handled, JrConnectionCx, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
+    role::{DefaultRole, JrRole},
     util::json_cast,
 };
 
@@ -64,21 +65,21 @@ use crate::{
 /// that handler runs and subsequent handlers are skipped. If parsing fails for all types,
 /// the `otherwise` handler receives the original untyped message.
 #[must_use]
-pub struct MatchMessage {
-    state: Result<Handled<MessageAndCx>, crate::Error>,
+pub struct MatchMessage<R: JrRole = DefaultRole> {
+    state: Result<Handled<MessageAndCx<R>>, crate::Error>,
 }
 
-impl MatchMessage {
+impl<R: JrRole> MatchMessage<R> {
     /// Create a new pattern matcher for the given untyped request message.
-    pub fn new(message: MessageAndCx) -> Self {
+    pub fn new(message: MessageAndCx<R>) -> Self {
         Self {
             state: Ok(Handled::No(message)),
         }
     }
 
-    /// Try to handle the message as a request of type `R`.
+    /// Try to handle the message as a request of type `Req`.
     ///
-    /// If the message can be parsed as `R`, the handler `op` is called with the parsed
+    /// If the message can be parsed as `Req`, the handler `op` is called with the parsed
     /// request and a typed request context. If parsing fails or the message was already
     /// handled by a previous `handle_if`, this call has no effect.
     ///
@@ -86,17 +87,17 @@ impl MatchMessage {
     /// `Handled` value to control whether the message should be passed to the next handler.
     ///
     /// Returns `self` to allow chaining multiple `handle_if` calls.
-    pub async fn if_request<R: JrRequest, H>(
+    pub async fn if_request<Req: JrRequest, H>(
         mut self,
-        op: impl AsyncFnOnce(R, JrRequestCx<R::Response>) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(Req, JrRequestCx<R, Req::Response>) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(R, JrRequestCx<R::Response>)>,
+        H: crate::IntoHandled<(Req, JrRequestCx<R, Req::Response>)>,
     {
         if let Ok(Handled::No(MessageAndCx::Request(untyped_request, untyped_request_cx))) =
             self.state
         {
-            match R::parse_request(untyped_request.method(), untyped_request.params()) {
+            match Req::parse_request(untyped_request.method(), untyped_request.params()) {
                 Some(Ok(typed_request)) => {
                     let typed_request_cx = untyped_request_cx.cast();
                     match op(typed_request, typed_request_cx).await {
@@ -142,10 +143,10 @@ impl MatchMessage {
     /// Returns `self` to allow chaining multiple `handle_if` calls.
     pub async fn if_notification<N: JrNotification, H>(
         mut self,
-        op: impl AsyncFnOnce(N, JrConnectionCx) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(N, JrConnectionCx<R>) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(N, JrConnectionCx)>,
+        H: crate::IntoHandled<(N, JrConnectionCx<R>)>,
     {
         if let Ok(Handled::No(MessageAndCx::Notification(untyped_notification, notification_cx))) =
             self.state
@@ -186,7 +187,7 @@ impl MatchMessage {
     }
 
     /// Complete matching, returning `Handled::No` if no match was found.
-    pub fn done(self) -> Result<Handled<MessageAndCx>, crate::Error> {
+    pub fn done(self) -> Result<Handled<MessageAndCx<R>>, crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(Handled::Yes),
             Ok(Handled::No(message)) => Ok(Handled::No(message)),
@@ -201,7 +202,7 @@ impl MatchMessage {
     /// matching chain and get the final result.
     pub async fn otherwise(
         self,
-        op: impl AsyncFnOnce(MessageAndCx) -> Result<(), crate::Error>,
+        op: impl AsyncFnOnce(MessageAndCx<R>) -> Result<(), crate::Error>,
     ) -> Result<(), crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(()),
