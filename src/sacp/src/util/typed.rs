@@ -9,7 +9,7 @@ use jsonrpcmsg::Params;
 
 use crate::{
     Handled, JrConnectionCx, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
-    role::{DefaultRole, JrRole},
+    role::{JrRole, UntypedRole},
     util::json_cast,
 };
 
@@ -24,12 +24,12 @@ use crate::{
 /// # Example
 ///
 /// ```
-/// # use sacp::{MessageAndCx, DefaultRole};
+/// # use sacp::{MessageAndCx, UntypedRole};
 /// # use sacp::schema::{InitializeRequest, InitializeResponse, PromptRequest, PromptResponse};
 /// # use sacp::util::MatchMessage;
 /// # async fn example(message: MessageAndCx) -> Result<(), sacp::Error> {
 /// MatchMessage::new(message)
-///     .if_request(|req: InitializeRequest, cx: sacp::JrRequestCx<DefaultRole, InitializeResponse>| async move {
+///     .if_request(|req: InitializeRequest, cx: sacp::JrRequestCx<UntypedRole, InitializeResponse>| async move {
 ///         // Handle initialization
 ///         let response = InitializeResponse {
 ///             protocol_version: req.protocol_version,
@@ -41,7 +41,7 @@ use crate::{
 ///         cx.respond(response)
 ///     })
 ///     .await
-///     .if_request(|req: PromptRequest, cx: sacp::JrRequestCx<DefaultRole, PromptResponse>| async move {
+///     .if_request(|req: PromptRequest, cx: sacp::JrRequestCx<UntypedRole, PromptResponse>| async move {
 ///         // Handle prompts
 ///         let response = PromptResponse {
 ///             stop_reason: sacp::schema::StopReason::EndTurn,
@@ -65,7 +65,7 @@ use crate::{
 /// that handler runs and subsequent handlers are skipped. If parsing fails for all types,
 /// the `otherwise` handler receives the original untyped message.
 #[must_use]
-pub struct MatchMessage<R: JrRole = DefaultRole> {
+pub struct MatchMessage<R: JrRole = UntypedRole> {
     state: Result<Handled<MessageAndCx<R>>, crate::Error>,
 }
 

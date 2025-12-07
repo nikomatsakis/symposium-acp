@@ -5,8 +5,8 @@
 //! handler claims them.
 
 use sacp::{
-    DefaultRole, JrHandlerChain, JrMessage, JrNotification, JrRequest, JrRequestCx, JrResponse,
-    JrResponsePayload,
+    JrHandlerChain, JrMessage, JrNotification, JrRequest, JrRequestCx, JrResponse,
+    JrResponsePayload, UntypedRole,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<DefaultRole, T>,
+    response: JrResponse<UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -155,7 +155,7 @@ async fn test_multiple_handlers_different_methods() {
             let server = JrHandlerChain::new()
                 .on_receive_request(
                     async |request: FooRequest,
-                           request_cx: JrRequestCx<DefaultRole, FooResponse>| {
+                           request_cx: JrRequestCx<UntypedRole, FooResponse>| {
                         request_cx.respond(FooResponse {
                             result: format!("foo: {}", request.value),
                         })
@@ -163,7 +163,7 @@ async fn test_multiple_handlers_different_methods() {
                 )
                 .on_receive_request(
                     async |request: BarRequest,
-                           request_cx: JrRequestCx<DefaultRole, BarResponse>| {
+                           request_cx: JrRequestCx<UntypedRole, BarResponse>| {
                         request_cx.respond(BarResponse {
                             result: format!("bar: {}", request.value),
                         })
@@ -278,7 +278,7 @@ async fn test_handler_priority_ordering() {
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new()
                 .on_receive_request(
-                    async move |request: TrackRequest, request_cx: JrRequestCx<DefaultRole, FooResponse>| {
+                    async move |request: TrackRequest, request_cx: JrRequestCx<UntypedRole, FooResponse>| {
                         handled_clone1.lock().unwrap().push("handler1".to_string());
                         request_cx.respond(FooResponse {
                             result: format!("handler1: {}", request.value),
@@ -286,7 +286,7 @@ async fn test_handler_priority_ordering() {
                     },
                 )
                 .on_receive_request(
-                    async move |request: TrackRequest, request_cx: JrRequestCx<DefaultRole, FooResponse>| {
+                    async move |request: TrackRequest, request_cx: JrRequestCx<UntypedRole, FooResponse>| {
                         handled_clone2.lock().unwrap().push("handler2".to_string());
                         request_cx.respond(FooResponse {
                             result: format!("handler2: {}", request.value),
@@ -436,7 +436,7 @@ async fn test_fallthrough_behavior() {
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new()
                 .on_receive_request(
-                    async move |request: Method1Request, request_cx: JrRequestCx<DefaultRole, FooResponse>| {
+                    async move |request: Method1Request, request_cx: JrRequestCx<UntypedRole, FooResponse>| {
                         handled_clone1.lock().unwrap().push("method1".to_string());
                         request_cx.respond(FooResponse {
                             result: format!("method1: {}", request.value),
@@ -444,7 +444,7 @@ async fn test_fallthrough_behavior() {
                     },
                 )
                 .on_receive_request(
-                    async move |request: Method2Request, request_cx: JrRequestCx<DefaultRole, FooResponse>| {
+                    async move |request: Method2Request, request_cx: JrRequestCx<UntypedRole, FooResponse>| {
                         handled_clone2.lock().unwrap().push("method2".to_string());
                         request_cx.respond(FooResponse {
                             result: format!("method2: {}", request.value),
@@ -513,7 +513,7 @@ async fn test_no_handler_claims() {
             // Handler that only handles "foo"
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
-                async |request: FooRequest, request_cx: JrRequestCx<DefaultRole, FooResponse>| {
+                async |request: FooRequest, request_cx: JrRequestCx<UntypedRole, FooResponse>| {
                     request_cx.respond(FooResponse {
                         result: format!("foo: {}", request.value),
                     })

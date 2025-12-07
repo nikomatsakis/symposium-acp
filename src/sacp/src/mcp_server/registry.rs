@@ -11,8 +11,8 @@ use crate::schema::{
 };
 use crate::util::MatchMessage;
 use crate::{
-    Channel, Component, DefaultRole, DynComponent, Handled, JrConnectionCx, JrHandlerChain,
-    JrMessageHandler, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
+    Channel, Component, DynComponent, Handled, JrConnectionCx, JrHandlerChain, JrMessageHandler,
+    JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage, UntypedRole,
 };
 use std::sync::{Arc, Mutex};
 
@@ -222,19 +222,19 @@ impl McpServiceRegistry {
     async fn handle_successor_request<Req: JrRequest>(
         &self,
         successor_request: SuccessorRequest<Req>,
-        request_cx: JrRequestCx<DefaultRole, Req::Response>,
+        request_cx: JrRequestCx<UntypedRole, Req::Response>,
         op: impl AsyncFnOnce(
             &Self,
             Req,
-            JrRequestCx<DefaultRole, Req::Response>,
+            JrRequestCx<UntypedRole, Req::Response>,
         ) -> Result<
-            Handled<(Req, JrRequestCx<DefaultRole, Req::Response>)>,
+            Handled<(Req, JrRequestCx<UntypedRole, Req::Response>)>,
             crate::Error,
         >,
     ) -> Result<
         Handled<(
             SuccessorRequest<Req>,
-            JrRequestCx<DefaultRole, Req::Response>,
+            JrRequestCx<UntypedRole, Req::Response>,
         )>,
         crate::Error,
     > {
@@ -253,11 +253,11 @@ impl McpServiceRegistry {
     async fn handle_connect_request(
         &self,
         request: McpConnectRequest,
-        request_cx: JrRequestCx<DefaultRole, McpConnectResponse>,
+        request_cx: JrRequestCx<UntypedRole, McpConnectResponse>,
     ) -> Result<
         Handled<(
             McpConnectRequest,
-            JrRequestCx<DefaultRole, McpConnectResponse>,
+            JrRequestCx<UntypedRole, McpConnectResponse>,
         )>,
         crate::Error,
     > {
@@ -351,11 +351,11 @@ impl McpServiceRegistry {
     async fn handle_mcp_over_acp_request(
         &self,
         request: McpOverAcpRequest<UntypedMessage>,
-        request_cx: JrRequestCx<DefaultRole, serde_json::Value>,
+        request_cx: JrRequestCx<UntypedRole, serde_json::Value>,
     ) -> Result<
         Handled<(
             McpOverAcpRequest<UntypedMessage>,
-            JrRequestCx<DefaultRole, serde_json::Value>,
+            JrRequestCx<UntypedRole, serde_json::Value>,
         )>,
         crate::Error,
     > {
@@ -432,11 +432,11 @@ impl McpServiceRegistry {
     async fn handle_new_session_request(
         &self,
         mut request: NewSessionRequest,
-        request_cx: JrRequestCx<DefaultRole, NewSessionResponse>,
+        request_cx: JrRequestCx<UntypedRole, NewSessionResponse>,
     ) -> Result<
         Handled<(
             NewSessionRequest,
-            JrRequestCx<DefaultRole, NewSessionResponse>,
+            JrRequestCx<UntypedRole, NewSessionResponse>,
         )>,
         crate::Error,
     > {

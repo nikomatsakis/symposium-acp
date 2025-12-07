@@ -77,27 +77,30 @@ pub trait ReceivesFromRole<R: JrRole>: JrRole {
 /// ```
 pub trait SendsTo<R: JrRole, M>: SendsToRole<R> {}
 
-/// A role that returns an error for unhandled messages.
+/// A role that opts out of type-safe role checking.
 ///
-/// This is the default role used when no specific role is provided.
-/// It has full client and server capabilities.
+/// `UntypedRole` can send any message to any other `UntypedRole`, making it
+/// suitable for generic code, tests, and situations where role-specific
+/// behavior is not needed.
 ///
-/// `DefaultRole` can send any message to itself (pass-through), making it
-/// suitable for generic code that doesn't need role-specific behavior.
+/// For type-safe ACP communication, use the specific role types:
+/// - [`AcpClient`](crate::schema::AcpClient) for clients/editors
+/// - [`AcpAgent`](crate::schema::AcpAgent) for agents
+/// - [`AcpProxy`](crate::schema::AcpProxy) for proxies
 #[derive(Debug, Default, Clone)]
-pub struct DefaultRole;
+pub struct UntypedRole;
 
-impl JrRole for DefaultRole {}
+impl JrRole for UntypedRole {}
 
-impl DefaultCounterpart for DefaultRole {
-    type Counterpart = DefaultRole;
+impl DefaultCounterpart for UntypedRole {
+    type Counterpart = UntypedRole;
 }
 
-impl SendsToRole<DefaultRole> for DefaultRole {
+impl SendsToRole<UntypedRole> for UntypedRole {
     fn transform_request(
         &self,
         message: UntypedMessage,
-        _target: &DefaultRole,
+        _target: &UntypedRole,
     ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
@@ -105,10 +108,10 @@ impl SendsToRole<DefaultRole> for DefaultRole {
     fn transform_notification(
         &self,
         message: UntypedMessage,
-        _target: &DefaultRole,
+        _target: &UntypedRole,
     ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 }
 
-impl<M> SendsTo<DefaultRole, M> for DefaultRole {}
+impl<M> SendsTo<UntypedRole, M> for UntypedRole {}

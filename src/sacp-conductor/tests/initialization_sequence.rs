@@ -18,7 +18,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to receive a JSON-RPC response
 async fn recv<T: sacp::JrResponsePayload + Send>(
-    response: sacp::JrResponse<sacp::DefaultRole, T>,
+    response: sacp::JrResponse<sacp::UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {

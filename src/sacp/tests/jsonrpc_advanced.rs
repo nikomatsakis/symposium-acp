@@ -7,14 +7,14 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use sacp::{
-    DefaultRole, JrHandlerChain, JrMessage, JrRequest, JrRequestCx, JrResponse, JrResponsePayload,
+    JrHandlerChain, JrMessage, JrRequest, JrRequestCx, JrResponse, JrResponsePayload, UntypedRole,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<DefaultRole, T>,
+    response: JrResponse<UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -169,7 +169,7 @@ async fn test_bidirectional_communication() {
 
             let side_a_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let side_a = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<DefaultRole, PongResponse>| {
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
                     request_cx.respond(PongResponse {
                         value: request.value + 1,
                     })
@@ -220,7 +220,7 @@ async fn test_request_ids() {
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<DefaultRole, PongResponse>| {
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
                     request_cx.respond(PongResponse {
                         value: request.value + 1,
                     })
@@ -279,7 +279,7 @@ async fn test_out_of_order_responses() {
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
-                async |request: SlowRequest, request_cx: JrRequestCx<DefaultRole, SlowResponse>| {
+                async |request: SlowRequest, request_cx: JrRequestCx<UntypedRole, SlowResponse>| {
                     // Simulate delay
                     tokio::time::sleep(tokio::time::Duration::from_millis(request.delay_ms)).await;
                     request_cx.respond(SlowResponse { id: request.id })

@@ -10,14 +10,14 @@
 use expect_test::expect;
 use futures::{AsyncRead, AsyncWrite};
 use sacp::{
-    DefaultRole, JrHandlerChain, JrMessage, JrRequest, JrRequestCx, JrResponse, JrResponsePayload,
+    JrHandlerChain, JrMessage, JrRequest, JrRequestCx, JrResponse, JrResponsePayload, UntypedRole,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<DefaultRole, T>,
+    response: JrResponse<UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -290,7 +290,7 @@ async fn test_handler_returns_error() {
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
                 async |_request: ErrorRequest,
-                       request_cx: JrRequestCx<DefaultRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
                     // Explicitly return an error
                     request_cx.respond_with_error(sacp::Error::new((
                         -32000,
@@ -384,7 +384,7 @@ async fn test_missing_required_params() {
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
                 async |_request: EmptyRequest,
-                       request_cx: JrRequestCx<DefaultRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
                     // This will be called, but EmptyRequest parsing already succeeded
                     // The test is actually checking if EmptyRequest (no params) fails to parse as SimpleRequest
                     // But with the new API, EmptyRequest parses successfully since it expects no params

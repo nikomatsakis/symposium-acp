@@ -5,8 +5,8 @@
 
 use futures::{AsyncRead, AsyncWrite};
 use sacp::{
-    DefaultRole, JrHandlerChain, JrMessage, JrNotification, JrRequest, JrRequestCx, JrResponse,
-    JrResponsePayload,
+    JrHandlerChain, JrMessage, JrNotification, JrRequest, JrRequestCx, JrResponse,
+    JrResponsePayload, UntypedRole,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -15,7 +15,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<DefaultRole, T>,
+    response: JrResponse<UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -111,7 +111,7 @@ async fn test_hello_world() {
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
                 async move |request: PingRequest,
-                            request_cx: JrRequestCx<DefaultRole, PongResponse>| {
+                            request_cx: JrRequestCx<UntypedRole, PongResponse>| {
                     let pong = PongResponse {
                         echo: format!("pong: {}", request.message),
                     };
@@ -276,7 +276,7 @@ async fn test_multiple_sequential_requests() {
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<DefaultRole, PongResponse>| {
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
                     let pong = PongResponse {
                         echo: format!("pong: {}", request.message),
                     };
@@ -332,7 +332,7 @@ async fn test_concurrent_requests() {
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
             let server = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<DefaultRole, PongResponse>| {
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
                     let pong = PongResponse {
                         echo: format!("pong: {}", request.message),
                     };
