@@ -1,4 +1,3 @@
-use sacp::handler::*;
 use sacp::*;
 use serde::{Deserialize, Serialize};
 
@@ -252,7 +251,7 @@ pub fn process(data: &str) -> Result<String, crate::Error> {
 }
 
 // Helper to create a mock connection for examples
-pub fn mock_connection() -> JrHandlerChain {
+pub fn mock_connection() -> JrHandlerChain<UntypedRole> {
     JrHandlerChain::new()
 }
 

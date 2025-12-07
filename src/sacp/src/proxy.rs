@@ -43,7 +43,7 @@ use crate::{
 // =============================================================================
 
 /// Extension trait for JrHandlerChain that adds proxy-specific functionality
-pub trait AcpProxyExt<H: JrMessageHandler> {
+pub trait AcpProxyExt<H: JrMessageHandler<UntypedRole>> {
     /// Adds a handler for requests received from the successor component.
     ///
     /// The provided handler will receive unwrapped ACP messages - the
@@ -100,7 +100,7 @@ pub trait AcpProxyExt<H: JrMessageHandler> {
     ) -> JrHandlerChain<UntypedRole, ChainedHandler<H, McpServiceRegistry>>;
 }
 
-impl<H: JrMessageHandler> AcpProxyExt<H> for JrHandlerChain<UntypedRole, H> {
+impl<H: JrMessageHandler<UntypedRole>> AcpProxyExt<H> for JrHandlerChain<UntypedRole, H> {
     fn on_receive_request_from_successor<R, F>(
         self,
         op: F,
@@ -230,7 +230,7 @@ where
     }
 }
 
-impl<R, N, F> JrMessageHandler for MessageFromSuccessorHandler<R, N, F>
+impl<R, N, F> JrMessageHandler<UntypedRole> for MessageFromSuccessorHandler<R, N, F>
 where
     R: JrRequest,
     N: JrNotification,
@@ -339,7 +339,7 @@ where
     }
 }
 
-impl<R, F> JrMessageHandler for RequestFromSuccessorHandler<R, F>
+impl<R, F> JrMessageHandler<UntypedRole> for RequestFromSuccessorHandler<R, F>
 where
     R: JrRequest,
     F: AsyncFnMut(R, JrRequestCx<UntypedRole, R::Response>) -> Result<(), crate::Error>,
@@ -404,7 +404,7 @@ where
     }
 }
 
-impl<N, F> JrMessageHandler for NotificationFromSuccessorHandler<N, F>
+impl<N, F> JrMessageHandler<UntypedRole> for NotificationFromSuccessorHandler<N, F>
 where
     N: JrNotification,
     F: AsyncFnMut(N, JrConnectionCx<UntypedRole>) -> Result<(), crate::Error>,
@@ -452,7 +452,7 @@ where
 /// Handler for the "default proxy" behavior.
 pub struct ProxyHandler {}
 
-impl JrMessageHandler for ProxyHandler {
+impl JrMessageHandler<UntypedRole> for ProxyHandler {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "proxy"
     }

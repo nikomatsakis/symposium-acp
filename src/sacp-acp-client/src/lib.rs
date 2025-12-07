@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use extension_trait::extension_trait;
+use sacp::UntypedRole;
 use sacp::mcp_server::McpServiceRegistry;
 use sacp::{JrConnectionCx, schema::NewSessionRequest};
 
 #[extension_trait]
-pub impl AcpClient for JrConnectionCx {
+pub impl AcpClientExt for JrConnectionCx<UntypedRole> {
     fn new_session(&self) -> AcpSessionBuilder {
         AcpSessionBuilder::new(self.clone())
     }
@@ -13,11 +14,11 @@ pub impl AcpClient for JrConnectionCx {
 
 pub struct AcpSessionBuilder {
     request: NewSessionRequest,
-    cx: JrConnectionCx,
+    cx: JrConnectionCx<UntypedRole>,
 }
 
 impl AcpSessionBuilder {
-    pub fn new(cx: JrConnectionCx) -> Self {
+    pub fn new(cx: JrConnectionCx<UntypedRole>) -> Self {
         Self {
             request: NewSessionRequest {
                 cwd: PathBuf::new(),

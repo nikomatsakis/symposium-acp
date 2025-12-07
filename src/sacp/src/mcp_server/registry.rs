@@ -39,7 +39,7 @@ pub struct McpServiceRegistry {
 struct McpServiceRegistryData {
     registered_by_name: FxHashMap<String, Arc<RegisteredMcpServer>>,
     registered_by_url: FxHashMap<String, Arc<RegisteredMcpServer>>,
-    connections: FxHashMap<String, mpsc::Sender<MessageAndCx>>,
+    connections: FxHashMap<String, mpsc::Sender<MessageAndCx<UntypedRole>>>,
 }
 
 impl McpServiceRegistry {
@@ -180,7 +180,7 @@ impl McpServiceRegistry {
             .cloned()
     }
 
-    fn insert_connection(&self, connection_id: &str, tx: mpsc::Sender<MessageAndCx>) {
+    fn insert_connection(&self, connection_id: &str, tx: mpsc::Sender<MessageAndCx<UntypedRole>>) {
         self.data
             .lock()
             .expect("not poisoned")
@@ -188,7 +188,10 @@ impl McpServiceRegistry {
             .insert(connection_id.to_string(), tx);
     }
 
-    fn get_connection(&self, connection_id: &str) -> Option<mpsc::Sender<MessageAndCx>> {
+    fn get_connection(
+        &self,
+        connection_id: &str,
+    ) -> Option<mpsc::Sender<MessageAndCx<UntypedRole>>> {
         self.data
             .lock()
             .expect("not poisoned")
@@ -282,7 +285,7 @@ impl McpServiceRegistry {
             let outer_cx = outer_cx.clone();
 
             JrHandlerChain::new()
-                .on_receive_message(async move |message: MessageAndCx| {
+                .on_receive_message(async move |message: MessageAndCx<UntypedRole>| {
                     // Wrap the message in McpOverAcp{Request,Notification} and forward to successor
                     let wrapped = message.map(
                         |request, request_cx| {
@@ -375,13 +378,14 @@ impl McpServiceRegistry {
     async fn handle_successor_notification<N: JrNotification>(
         &self,
         successor_notification: SuccessorNotification<N>,
-        notification_cx: JrConnectionCx,
+        notification_cx: JrConnectionCx<UntypedRole>,
         op: impl AsyncFnOnce(
             &Self,
             N,
-            JrConnectionCx,
-        ) -> Result<Handled<(N, JrConnectionCx)>, crate::Error>,
-    ) -> Result<Handled<(SuccessorNotification<N>, JrConnectionCx)>, crate::Error> {
+            JrConnectionCx<UntypedRole>,
+        ) -> Result<Handled<(N, JrConnectionCx<UntypedRole>)>, crate::Error>,
+    ) -> Result<Handled<(SuccessorNotification<N>, JrConnectionCx<UntypedRole>)>, crate::Error>
+    {
         match op(self, successor_notification.notification, notification_cx).await? {
             Handled::Yes => Ok(Handled::Yes),
             Handled::No((notification, cx)) => Ok(Handled::No((
@@ -397,9 +401,14 @@ impl McpServiceRegistry {
     async fn handle_mcp_over_acp_notification(
         &self,
         notification: McpOverAcpNotification<UntypedMessage>,
-        notification_cx: JrConnectionCx,
-    ) -> Result<Handled<(McpOverAcpNotification<UntypedMessage>, JrConnectionCx)>, crate::Error>
-    {
+        notification_cx: JrConnectionCx<UntypedRole>,
+    ) -> Result<
+        Handled<(
+            McpOverAcpNotification<UntypedMessage>,
+            JrConnectionCx<UntypedRole>,
+        )>,
+        crate::Error,
+    > {
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
         let Some(mut mcp_server_tx) = self.get_connection(&notification.connection_id) else {
             return Ok(Handled::No((notification, notification_cx)));
@@ -419,8 +428,9 @@ impl McpServiceRegistry {
     async fn handle_mcp_disconnect_notification(
         &self,
         successor_notification: McpDisconnectNotification,
-        notification_cx: JrConnectionCx,
-    ) -> Result<Handled<(McpDisconnectNotification, JrConnectionCx)>, crate::Error> {
+        notification_cx: JrConnectionCx<UntypedRole>,
+    ) -> Result<Handled<(McpDisconnectNotification, JrConnectionCx<UntypedRole>)>, crate::Error>
+    {
         // Remove connection if we have it. Otherwise, do not handle the notification.
         if self.remove_connection(&successor_notification.connection_id) {
             Ok(Handled::Yes)
@@ -450,15 +460,15 @@ impl McpServiceRegistry {
     }
 }
 
-impl JrMessageHandler for McpServiceRegistry {
+impl JrMessageHandler<UntypedRole> for McpServiceRegistry {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "McpServiceRegistry"
     }
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> Result<Handled<MessageAndCx>, crate::Error> {
+        message: MessageAndCx<UntypedRole>,
+    ) -> Result<Handled<MessageAndCx<UntypedRole>>, crate::Error> {
         // Hmm, this is a bit wacky:
         //
         // * In a proxy, we expect to receive MCP over ACP notifications wrapped as a "FromSuccessorNotification"
@@ -521,16 +531,17 @@ impl JrMessageHandler for McpServiceRegistry {
     }
 }
 
-impl crate::JrMessageHandlerSend for McpServiceRegistry {
+impl crate::JrMessageHandlerSend<UntypedRole> for McpServiceRegistry {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "McpServiceRegistry"
     }
 
     fn handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> impl std::future::Future<Output = Result<Handled<MessageAndCx>, crate::Error>> + Send {
-        <Self as JrMessageHandler>::handle_message(self, message)
+        message: MessageAndCx<UntypedRole>,
+    ) -> impl std::future::Future<Output = Result<Handled<MessageAndCx<UntypedRole>>, crate::Error>> + Send
+    {
+        <Self as JrMessageHandler<UntypedRole>>::handle_message(self, message)
     }
 }
 
@@ -581,7 +592,7 @@ impl AsRef<McpServiceRegistry> for McpServiceRegistry {
 #[derive(Clone)]
 pub struct McpContext {
     acp_url: String,
-    connection_cx: JrConnectionCx,
+    connection_cx: JrConnectionCx<UntypedRole>,
 }
 
 impl McpContext {
@@ -592,7 +603,7 @@ impl McpContext {
 
     /// The ACP connection context, which can be used to send ACP requests and notifications
     /// to your successor.
-    pub fn connection_cx(&self) -> JrConnectionCx {
+    pub fn connection_cx(&self) -> JrConnectionCx<UntypedRole> {
         self.connection_cx.clone()
     }
 }

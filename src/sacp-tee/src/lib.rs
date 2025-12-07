@@ -6,7 +6,7 @@
 use anyhow::Result;
 use sacp::component::Component;
 use sacp::proxy::AcpProxyExt;
-use sacp::{Handled, JrMessageHandler, MessageAndCx};
+use sacp::{Handled, JrMessageHandler, MessageAndCx, UntypedRole};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -111,15 +111,15 @@ impl TeeHandler {
     }
 }
 
-impl JrMessageHandler for TeeHandler {
+impl JrMessageHandler<UntypedRole> for TeeHandler {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "tee"
     }
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx,
-    ) -> Result<Handled<MessageAndCx>, sacp::Error> {
+        message: MessageAndCx<UntypedRole>,
+    ) -> Result<Handled<MessageAndCx<UntypedRole>>, sacp::Error> {
         match message {
             MessageAndCx::Request(request, request_cx) => {
                 // Allocate a synthetic ID for tracking this request/response pair

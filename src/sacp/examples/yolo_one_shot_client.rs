@@ -110,55 +110,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         })
-        .with_client(transport, |cx: sacp::JrConnectionCx| async move {
-            // Initialize the agent
-            eprintln!("🤝 Initializing agent...");
-            let init_response = cx
-                .send_request(InitializeRequest {
-                    protocol_version: PROTOCOL_VERSION,
-                    client_capabilities: Default::default(),
-                    client_info: Default::default(),
-                    meta: None,
-                })
-                .block_task()
-                .await?;
-
-            eprintln!("✓ Agent initialized: {:?}", init_response.agent_info);
-
-            // Create a new session
-            eprintln!("📝 Creating new session...");
-            let new_session_response = cx
-                .send_request(NewSessionRequest {
-                    mcp_servers: vec![],
-                    cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-                    meta: None,
-                })
-                .block_task()
-                .await?;
-
-            let session_id = new_session_response.session_id;
-            eprintln!("✓ Session created: {}", session_id);
-
-            // Send the prompt
-            eprintln!("💬 Sending prompt: \"{}\"", cli.prompt);
-            let prompt_response = cx
-                .send_request(PromptRequest {
-                    session_id: session_id.clone(),
-                    prompt: vec![ContentBlock::Text(TextContent {
-                        text: cli.prompt.clone(),
-                        annotations: None,
+        .with_client(
+            transport,
+            |cx: sacp::JrConnectionCx<sacp::UntypedRole>| async move {
+                // Initialize the agent
+                eprintln!("🤝 Initializing agent...");
+                let init_response = cx
+                    .send_request(InitializeRequest {
+                        protocol_version: PROTOCOL_VERSION,
+                        client_capabilities: Default::default(),
+                        client_info: Default::default(),
                         meta: None,
-                    })],
-                    meta: None,
-                })
-                .block_task()
-                .await?;
+                    })
+                    .block_task()
+                    .await?;
 
-            eprintln!("✅ Agent completed!");
-            eprintln!("Stop reason: {:?}", prompt_response.stop_reason);
+                eprintln!("✓ Agent initialized: {:?}", init_response.agent_info);
 
-            Ok(())
-        })
+                // Create a new session
+                eprintln!("📝 Creating new session...");
+                let new_session_response = cx
+                    .send_request(NewSessionRequest {
+                        mcp_servers: vec![],
+                        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+                        meta: None,
+                    })
+                    .block_task()
+                    .await?;
+
+                let session_id = new_session_response.session_id;
+                eprintln!("✓ Session created: {}", session_id);
+
+                // Send the prompt
+                eprintln!("💬 Sending prompt: \"{}\"", cli.prompt);
+                let prompt_response = cx
+                    .send_request(PromptRequest {
+                        session_id: session_id.clone(),
+                        prompt: vec![ContentBlock::Text(TextContent {
+                            text: cli.prompt.clone(),
+                            annotations: None,
+                            meta: None,
+                        })],
+                        meta: None,
+                    })
+                    .block_task()
+                    .await?;
+
+                eprintln!("✅ Agent completed!");
+                eprintln!("Stop reason: {:?}", prompt_response.stop_reason);
+
+                Ok(())
+            },
+        )
         .await?;
 
     // Kill the child process when done

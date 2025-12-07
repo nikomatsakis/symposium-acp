@@ -56,11 +56,11 @@ impl JrRequest for EchoRequestResponse {
 
 struct EchoHandler;
 
-impl JrMessageHandler for EchoHandler {
+impl JrMessageHandler<sacp::UntypedRole> for EchoHandler {
     async fn handle_message(
         &mut self,
-        message: sacp::MessageAndCx,
-    ) -> Result<sacp::Handled<sacp::MessageAndCx>, sacp::Error> {
+        message: sacp::MessageAndCx<sacp::UntypedRole>,
+    ) -> Result<sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole>>, sacp::Error> {
         MatchMessage::new(message)
             .if_request(async move |request: EchoRequestResponse, request_cx| {
                 request_cx.respond(request)
@@ -97,11 +97,11 @@ async fn modify_message_en_route() -> Result<(), sacp::Error> {
         message: String,
     }
 
-    impl JrMessageHandler for PushHandler {
+    impl JrMessageHandler<sacp::UntypedRole> for PushHandler {
         async fn handle_message(
             &mut self,
-            message: sacp::MessageAndCx,
-        ) -> Result<sacp::Handled<sacp::MessageAndCx>, sacp::Error> {
+            message: sacp::MessageAndCx<sacp::UntypedRole>,
+        ) -> Result<sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole>>, sacp::Error> {
             MatchMessage::new(message)
                 .if_request(async move |mut request: EchoRequestResponse, request_cx| {
                     request.text.push(self.message.clone());

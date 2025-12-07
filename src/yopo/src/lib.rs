@@ -119,7 +119,7 @@ pub async fn prompt_with_callback(
             })
         })
         .connect_to(component)?
-        .with_client(|cx: sacp::JrConnectionCx| async move {
+        .with_client(|cx: sacp::JrConnectionCx<sacp::UntypedRole>| async move {
             // Initialize the agent
             let _init_response = cx
                 .send_request(InitializeRequest {

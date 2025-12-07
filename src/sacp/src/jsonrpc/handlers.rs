@@ -1,5 +1,5 @@
 use crate::jsonrpc::{Handled, IntoHandled, JrMessageHandler};
-use crate::role::{JrRole, UntypedRole};
+use crate::role::JrRole;
 use crate::{JrConnectionCx, JrNotification, JrRequest, MessageAndCx, UntypedMessage};
 // Types re-exported from crate root
 use super::JrRequestCx;
@@ -26,7 +26,7 @@ impl<R: JrRole> JrMessageHandler<R> for NullHandler {
 }
 
 /// Handler for typed request messages
-pub struct RequestHandler<R: JrRole = UntypedRole, Req: JrRequest = UntypedMessage, F = ()> {
+pub struct RequestHandler<R: JrRole, Req: JrRequest = UntypedMessage, F = ()> {
     handler: F,
     phantom: PhantomData<fn(R, Req)>,
 }
@@ -97,11 +97,7 @@ where
 }
 
 /// Handler for typed notification messages
-pub struct NotificationHandler<
-    R: JrRole = UntypedRole,
-    Notif: JrNotification = UntypedMessage,
-    F = (),
-> {
+pub struct NotificationHandler<R: JrRole, Notif: JrNotification = UntypedMessage, F = ()> {
     handler: F,
     phantom: PhantomData<fn(R, Notif)>,
 }
@@ -175,7 +171,7 @@ where
 
 /// Handler that handles both requests and notifications of specific types.
 pub struct MessageHandler<
-    R: JrRole = UntypedRole,
+    R: JrRole,
     Req: JrRequest = UntypedMessage,
     Notif: JrNotification = UntypedMessage,
     F = (),

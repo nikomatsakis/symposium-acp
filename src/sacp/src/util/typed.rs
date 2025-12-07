@@ -9,8 +9,7 @@ use jsonrpcmsg::Params;
 
 use crate::{
     Handled, JrConnectionCx, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
-    role::{JrRole, UntypedRole},
-    util::json_cast,
+    role::JrRole, util::json_cast,
 };
 
 /// Helper for pattern-matching on untyped JSON-RPC requests.
@@ -65,7 +64,7 @@ use crate::{
 /// that handler runs and subsequent handlers are skipped. If parsing fails for all types,
 /// the `otherwise` handler receives the original untyped message.
 #[must_use]
-pub struct MatchMessage<R: JrRole = UntypedRole> {
+pub struct MatchMessage<R: JrRole> {
     state: Result<Handled<MessageAndCx<R>>, crate::Error>,
 }
 
@@ -249,8 +248,8 @@ impl<R: JrRole> MatchMessage<R> {
 /// Since notifications don't expect responses, handlers only receive the parsed
 /// notification (not a request context).
 #[must_use]
-pub struct TypeNotification {
-    cx: JrConnectionCx,
+pub struct TypeNotification<R: JrRole> {
+    cx: JrConnectionCx<R>,
     state: Option<TypeNotificationState>,
 }
 
@@ -259,9 +258,9 @@ enum TypeNotificationState {
     Handled(Result<(), crate::Error>),
 }
 
-impl TypeNotification {
+impl<R: JrRole> TypeNotification<R> {
     /// Create a new pattern matcher for the given untyped notification message.
-    pub fn new(request: UntypedMessage, cx: &JrConnectionCx) -> Self {
+    pub fn new(request: UntypedMessage, cx: &JrConnectionCx<R>) -> Self {
         let UntypedMessage { method, params } = request;
         let params: Option<Params> = json_cast(params).expect("valid params");
         Self {

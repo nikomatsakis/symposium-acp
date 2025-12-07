@@ -34,7 +34,7 @@ use crate::role::{JrRole, UntypedRole};
 /// They have a chance to inspect the method and parameters and decide whether to "claim" the request
 /// (i.e., handle it). If they do not claim it, the request will be passed to the next handler.
 #[allow(async_fn_in_trait)]
-pub trait JrMessageHandler<R: JrRole = UntypedRole> {
+pub trait JrMessageHandler<R: JrRole> {
     /// Attempt to claim an incoming message (request or notification).
     ///
     /// # Important: do not block
@@ -68,7 +68,7 @@ pub trait JrMessageHandler<R: JrRole = UntypedRole> {
 /// If you are implementing [`JrMessageHandler`] explicitly, as opposed to using helper
 /// methods like [`JrHandlerChain::on_receive_message`], then it is better to implement this Send trait
 /// when possible.
-pub trait JrMessageHandlerSend<R: JrRole = UntypedRole>: Send {
+pub trait JrMessageHandlerSend<R: JrRole>: Send {
     /// Returns a (sendable) future that will potentially handle the message.
     /// The [`Handled`] return value indicates whether the message was handled or not.
     /// If the message was not handled, it may have been modified, and the modified message
@@ -380,7 +380,7 @@ pub trait JrMessageHandlerSend<R: JrRole = UntypedRole>: Send {
 /// # }
 /// ```
 #[must_use]
-pub struct JrHandlerChain<R: JrRole = UntypedRole, H: JrMessageHandler<R> = NullHandler> {
+pub struct JrHandlerChain<R: JrRole, H: JrMessageHandler<R> = NullHandler> {
     name: Option<String>,
 
     /// The role for this connection.
@@ -800,7 +800,7 @@ impl<R: JrRole, H: JrMessageHandler<R>> JrHandlerChain<R, H> {
 ///
 /// Most users won't construct this directly - instead use `JrHandlerChain::connect_to()` or
 /// `JrHandlerChain::serve()` for convenience.
-pub struct JrConnection<R: JrRole = UntypedRole, H: JrMessageHandler<R> = NullHandler> {
+pub struct JrConnection<R: JrRole, H: JrMessageHandler<R> = NullHandler> {
     cx: JrConnectionCx<R>,
     name: Option<String>,
     outgoing_rx: mpsc::UnboundedReceiver<OutgoingMessage>,
@@ -1085,7 +1085,7 @@ impl<T> IntoHandled<T> for Handled<T> {
 /// See the [Event Loop and Concurrency](JrConnection#event-loop-and-concurrency) section
 /// for more details.
 #[derive(Clone, Debug)]
-pub struct JrConnectionCx<R: JrRole = UntypedRole> {
+pub struct JrConnectionCx<R: JrRole> {
     role: R,
     message_tx: mpsc::UnboundedSender<OutgoingMessage>,
     task_tx: mpsc::UnboundedSender<Task>,
@@ -1463,7 +1463,7 @@ impl<R: JrRole> JrConnectionCx<R> {
 }
 
 #[derive(Clone, Debug)]
-pub struct DynamicHandlerRegistration<R: JrRole = UntypedRole> {
+pub struct DynamicHandlerRegistration<R: JrRole> {
     uuid: Uuid,
     cx: JrConnectionCx<R>,
 }
@@ -1524,7 +1524,7 @@ impl<R: JrRole> Drop for DynamicHandlerRegistration<R> {
 /// See the [Event Loop and Concurrency](JrConnection#event-loop-and-concurrency)
 /// section for more details.
 #[must_use]
-pub struct JrRequestCx<R: JrRole = UntypedRole, T: JrResponsePayload = serde_json::Value> {
+pub struct JrRequestCx<R: JrRole, T: JrResponsePayload = serde_json::Value> {
     /// The context to use to send outgoing messages and replies.
     cx: JrConnectionCx<R>,
 
@@ -1722,11 +1722,8 @@ pub trait JrRequest: JrMessage {
 /// By default, both are `UntypedMessage` for dynamic dispatch.
 /// The request context's response type matches the request's response type.
 #[derive(Debug)]
-pub enum MessageAndCx<
-    R: JrRole = UntypedRole,
-    Req: JrRequest = UntypedMessage,
-    Notif: JrMessage = UntypedMessage,
-> {
+pub enum MessageAndCx<R: JrRole, Req: JrRequest = UntypedMessage, Notif: JrMessage = UntypedMessage>
+{
     /// Incoming request and the context where the response should be sent.
     Request(Req, JrRequestCx<R, Req::Response>),
 
@@ -1967,7 +1964,7 @@ impl JrNotification for UntypedMessage {}
 /// If you block the event loop while waiting for a response, the connection cannot process
 /// the incoming response message, creating a deadlock. This API design prevents that footgun
 /// by making blocking explicit and encouraging non-blocking patterns.
-pub struct JrResponse<R: JrRole = UntypedRole, T = serde_json::Value> {
+pub struct JrResponse<R: JrRole, T = serde_json::Value> {
     method: String,
     connection_cx: JrConnectionCx<R>,
     response_rx: oneshot::Receiver<Result<serde_json::Value, crate::Error>>,

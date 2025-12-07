@@ -114,7 +114,7 @@ impl Component for InitComponent {
 
 async fn run_test_with_components(
     components: Vec<sacp::DynComponent>,
-    editor_task: impl AsyncFnOnce(sacp::JrConnectionCx) -> Result<(), sacp::Error>,
+    editor_task: impl AsyncFnOnce(sacp::JrConnectionCx<sacp::UntypedRole>) -> Result<(), sacp::Error>,
 ) -> Result<(), sacp::Error> {
     // Set up editor <-> conductor communication
     let (editor_out, conductor_in) = duplex(1024);

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use futures::{SinkExt, channel::mpsc};
 use sacp;
 use sacp::schema::McpServer;
-use sacp::{JrConnectionCx, MessageAndCx};
+use sacp::{JrConnectionCx, MessageAndCx, UntypedRole};
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -33,15 +33,15 @@ pub(super) struct McpBridgeListener {
 #[derive(Clone, Debug)]
 pub struct McpBridgeConnection {
     /// Channel to send messages from MCP server (ACP proxy) to the MCP client (ACP agent).
-    to_mcp_client_tx: mpsc::Sender<MessageAndCx>,
+    to_mcp_client_tx: mpsc::Sender<MessageAndCx<UntypedRole>>,
 }
 
 impl McpBridgeConnection {
-    pub fn new(to_mcp_client_tx: mpsc::Sender<MessageAndCx>) -> Self {
+    pub fn new(to_mcp_client_tx: mpsc::Sender<MessageAndCx<UntypedRole>>) -> Self {
         Self { to_mcp_client_tx }
     }
 
-    pub async fn send(&mut self, message: MessageAndCx) -> Result<(), sacp::Error> {
+    pub async fn send(&mut self, message: MessageAndCx<UntypedRole>) -> Result<(), sacp::Error> {
         self.to_mcp_client_tx
             .send(message)
             .await
@@ -60,7 +60,7 @@ impl McpBridgeListeners {
     /// Other MCP servers are left unchanged.
     pub async fn transform_mcp_server(
         &mut self,
-        cx: &JrConnectionCx,
+        cx: &JrConnectionCx<UntypedRole>,
         mcp_server: &mut McpServer,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
         mcp_bridge_mode: &crate::McpBridgeMode,
@@ -96,7 +96,7 @@ impl McpBridgeListeners {
     /// Spawn a bridge listener (HTTP or stdio) for an MCP server with ACP transport
     async fn spawn_bridge(
         &mut self,
-        cx: &JrConnectionCx,
+        cx: &JrConnectionCx<UntypedRole>,
         server_name: &str,
         acp_url: &str,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
