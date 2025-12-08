@@ -135,7 +135,7 @@ async fn dispatch_request<Local: JrRole, Remote: JrRole>(
 
         Handled::No(m) => {
             tracing::debug!(method = ?request.method, ?request.id, "No suitable handler found");
-            m.respond_with_error(crate::Error::method_not_found())
+            m.respond_with_error(crate::Error::method_not_found().with_data(request.method))
         }
     }
 }
