@@ -6,8 +6,8 @@
 //! - [`AcpProxy`] - A proxy that sits between client and agent, potentially transforming messages
 
 use crate::{
-    JrMessage,
-    role::{DefaultCounterpart, JrRole, SendsTo, SendsToRole},
+    Handled, JrMessage, JrMessageHandler, MessageAndCx, UntypedMessage,
+    role::{DefaultCounterpart, JrRole, ReceivesFromRole, SendsTo, SendsToRole},
     schema::{
         // Client → Agent requests
         AuthenticateRequest,
@@ -33,6 +33,7 @@ use crate::{
         WaitForTerminalExitRequest,
         WriteTextFileRequest,
     },
+    util::MatchMessage,
 };
 
 /// The ACP client role (e.g., an IDE or editor).
@@ -53,17 +54,17 @@ impl DefaultCounterpart for AcpClient {
 impl SendsToRole<AcpAgent> for AcpClient {
     fn transform_request(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpAgent,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 
     fn transform_notification(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpAgent,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 }
@@ -86,17 +87,17 @@ impl DefaultCounterpart for AcpAgent {
 impl SendsToRole<AcpClient> for AcpAgent {
     fn transform_request(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpClient,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 
     fn transform_notification(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpClient,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 }
@@ -120,17 +121,17 @@ impl DefaultCounterpart for AcpProxy {
 impl SendsToRole<AcpClient> for AcpProxy {
     fn transform_request(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpClient,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 
     fn transform_notification(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpClient,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 }
@@ -138,9 +139,9 @@ impl SendsToRole<AcpClient> for AcpProxy {
 impl SendsToRole<AcpAgent> for AcpProxy {
     fn transform_request(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpAgent,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         SuccessorRequest {
             request: message,
             meta: None,
@@ -150,9 +151,9 @@ impl SendsToRole<AcpAgent> for AcpProxy {
 
     fn transform_notification(
         &self,
-        message: crate::UntypedMessage,
+        message: UntypedMessage,
         _target: &AcpAgent,
-    ) -> Result<crate::UntypedMessage, crate::Error> {
+    ) -> Result<UntypedMessage, crate::Error> {
         SuccessorNotification {
             notification: message,
             meta: None,
@@ -196,5 +197,91 @@ impl<M> SendsTo<AcpAgent, M> for AcpProxy where AcpClient: SendsTo<AcpAgent, M> 
 impl<M> SendsTo<AcpClient, M> for AcpProxy where AcpAgent: SendsTo<AcpClient, M> {}
 
 // UntypedMessage can be sent in either direction (for generic code)
-impl SendsTo<AcpAgent, crate::UntypedMessage> for AcpClient {}
-impl SendsTo<AcpClient, crate::UntypedMessage> for AcpAgent {}
+impl SendsTo<AcpAgent, UntypedMessage> for AcpClient {}
+impl SendsTo<AcpClient, UntypedMessage> for AcpAgent {}
+
+// ============================================================================
+// ReceivesFromRole implementations
+// ============================================================================
+
+// Client ↔ Agent: passthrough (default counterparts, no transformation needed)
+impl ReceivesFromRole<AcpAgent> for AcpClient {
+    async fn receive_message(
+        &self,
+        _sender: &AcpAgent,
+        message: MessageAndCx<Self>,
+        handler: &mut impl JrMessageHandler<Self>,
+    ) -> Result<Handled<MessageAndCx<Self>>, crate::Error> {
+        handler.handle_message(message).await
+    }
+}
+
+impl ReceivesFromRole<AcpClient> for AcpAgent {
+    async fn receive_message(
+        &self,
+        _sender: &AcpClient,
+        message: MessageAndCx<Self>,
+        handler: &mut impl JrMessageHandler<Self>,
+    ) -> Result<Handled<MessageAndCx<Self>>, crate::Error> {
+        handler.handle_message(message).await
+    }
+}
+
+// Proxy ↔ Client: passthrough (proxy talks to client without wrapping)
+impl ReceivesFromRole<AcpClient> for AcpProxy {
+    async fn receive_message(
+        &self,
+        _sender: &AcpClient,
+        message: MessageAndCx<Self>,
+        handler: &mut impl JrMessageHandler<Self>,
+    ) -> Result<Handled<MessageAndCx<Self>>, crate::Error> {
+        handler.handle_message(message).await
+    }
+}
+
+// Agent ← Proxy: unwrap SuccessorRequest/SuccessorNotification envelopes
+impl ReceivesFromRole<AcpAgent> for AcpProxy {
+    async fn receive_message(
+        &self,
+        _sender: &AcpAgent,
+        message: MessageAndCx<Self>,
+        handler: &mut impl JrMessageHandler<Self>,
+    ) -> Result<Handled<MessageAndCx<Self>>, crate::Error> {
+        MatchMessage::new(message)
+            .if_request(
+                async |request: SuccessorRequest<UntypedMessage>, request_cx| match handler
+                    .handle_message(MessageAndCx::Request(request.request, request_cx))
+                    .await?
+                {
+                    Handled::Yes => Ok(Handled::Yes),
+                    Handled::No(MessageAndCx::Request(r, cx)) => Ok(Handled::No((
+                        SuccessorRequest {
+                            request: r,
+                            meta: request.meta,
+                        },
+                        cx,
+                    ))),
+                    Handled::No(_) => unreachable!(),
+                },
+            )
+            .await
+            .if_notification(
+                async |notification: SuccessorNotification<UntypedMessage>, cx| match handler
+                    .handle_message(MessageAndCx::Notification(notification.notification, cx))
+                    .await?
+                {
+                    Handled::Yes => Ok(Handled::Yes),
+                    Handled::No(MessageAndCx::Notification(n, cx)) => Ok(Handled::No((
+                        SuccessorNotification {
+                            notification: n,
+                            meta: notification.meta,
+                        },
+                        cx,
+                    ))),
+                    Handled::No(_) => unreachable!(),
+                },
+            )
+            .await
+            .done()
+    }
+}

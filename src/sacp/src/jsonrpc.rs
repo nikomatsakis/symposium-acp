@@ -26,9 +26,11 @@ mod transport_actor;
 use crate::Component;
 use crate::handler::{ChainedHandler, NamedHandler};
 use crate::jsonrpc::dynamic_handler::DynamicHandlerMessage;
-use crate::jsonrpc::handlers::{MessageHandler, NotificationHandler, NullHandler, RequestHandler};
+use crate::jsonrpc::handlers::{
+    AdaptRole, MessageHandler, NotificationHandler, NullHandler, RequestHandler,
+};
 use crate::jsonrpc::task_actor::{PendingTask, Task};
-use crate::role::{JrRole, UntypedRole};
+use crate::role::{JrRole, ReceivesFromRole, UntypedRole};
 
 /// Handlers are invoked when new messages arrive at the [`JrConnection`].
 /// They have a chance to inspect the method and parameters and decide whether to "claim" the request
@@ -635,6 +637,70 @@ impl<R: JrRole, H: JrMessageHandler<R>> JrHandlerChain<R, H> {
         T: IntoHandled<(Notif, JrConnectionCx<R>)>,
     {
         self.with_handler(NotificationHandler::new(op))
+    }
+
+    /// Register a handler for JSON-RPC requests from a specific sender role.
+    ///
+    /// This is similar to [`on_receive_request`](Self::on_receive_request), but allows
+    /// specifying the sender role explicitly. This is useful when receiving messages
+    /// from a role that requires message transformation (e.g., unwrapping `SuccessorRequest`
+    /// envelopes when receiving from a proxy).
+    ///
+    /// For the common case of receiving from the default counterpart, use
+    /// [`on_receive_request`](Self::on_receive_request) instead.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use sacp::schema::{AcpProxy, AcpAgent};
+    ///
+    /// // Agent receiving from a proxy - messages will be unwrapped from SuccessorRequest
+    /// connection.on_receive_request_from(AcpProxy, async |req: InitializeRequest, cx| {
+    ///     // Handle the request
+    ///     Ok(())
+    /// })
+    /// ```
+    pub fn on_receive_request_from<TxRole, Req, F, T>(
+        self,
+        sender: TxRole,
+        op: F,
+    ) -> JrHandlerChain<R, ChainedHandler<H, AdaptRole<R, TxRole, RequestHandler<R, Req, F>>>>
+    where
+        TxRole: JrRole,
+        R: ReceivesFromRole<TxRole>,
+        Req: JrRequest,
+        F: AsyncFnMut(Req, JrRequestCx<R, Req::Response>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<(Req, JrRequestCx<R, Req::Response>)>,
+        RequestHandler<R, Req, F>: JrMessageHandlerSend<R>,
+    {
+        let role = self.role.clone();
+        self.with_handler(AdaptRole::new(role, sender, RequestHandler::new(op)))
+    }
+
+    /// Register a handler for JSON-RPC notifications from a specific sender role.
+    ///
+    /// This is similar to [`on_receive_notification`](Self::on_receive_notification), but allows
+    /// specifying the sender role explicitly. This is useful when receiving messages
+    /// from a role that requires message transformation (e.g., unwrapping `SuccessorNotification`
+    /// envelopes when receiving from a proxy).
+    ///
+    /// For the common case of receiving from the default counterpart, use
+    /// [`on_receive_notification`](Self::on_receive_notification) instead.
+    pub fn on_receive_notification_from<TxRole, Notif, F, T>(
+        self,
+        sender: TxRole,
+        op: F,
+    ) -> JrHandlerChain<R, ChainedHandler<H, AdaptRole<R, TxRole, NotificationHandler<R, Notif, F>>>>
+    where
+        TxRole: JrRole,
+        R: ReceivesFromRole<TxRole>,
+        Notif: JrNotification,
+        F: AsyncFnMut(Notif, JrConnectionCx<R>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<(Notif, JrConnectionCx<R>)>,
+        NotificationHandler<R, Notif, F>: JrMessageHandlerSend<R>,
+    {
+        let role = self.role.clone();
+        self.with_handler(AdaptRole::new(role, sender, NotificationHandler::new(op)))
     }
 
     /// Connect these handlers to a transport layer.

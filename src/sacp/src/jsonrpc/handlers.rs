@@ -1,5 +1,5 @@
 use crate::jsonrpc::{Handled, IntoHandled, JrMessageHandler};
-use crate::role::JrRole;
+use crate::role::{JrRole, ReceivesFromRole};
 use crate::{JrConnectionCx, JrNotification, JrRequest, MessageAndCx, UntypedMessage};
 // Types re-exported from crate root
 use super::JrRequestCx;
@@ -367,5 +367,54 @@ where
             Handled::Yes => Ok(Handled::Yes),
             Handled::No(message) => self.handler2.handle_message(message).await,
         }
+    }
+}
+
+/// Adapts messages from one role to another before dispatching to the inner handler.
+///
+/// `RxRole` is the role of the handler chain (the receiver).
+/// `TxRole` is the role of the sender of the messages.
+///
+/// The `RxRole: ReceivesFromRole<TxRole>` bound provides the logic for
+/// transforming incoming messages (e.g., unwrapping `SuccessorRequest` envelopes).
+pub struct AdaptRole<RxRole, TxRole, H> {
+    rx_role: RxRole,
+    tx_role: TxRole,
+    handler: H,
+}
+
+impl<RxRole, TxRole, H> AdaptRole<RxRole, TxRole, H> {
+    /// Creates a new role adapter.
+    pub fn new(rx_role: RxRole, tx_role: TxRole, handler: H) -> Self {
+        Self {
+            rx_role,
+            tx_role,
+            handler,
+        }
+    }
+}
+
+impl<RxRole, TxRole, H> JrMessageHandler<RxRole> for AdaptRole<RxRole, TxRole, H>
+where
+    RxRole: ReceivesFromRole<TxRole>,
+    TxRole: JrRole,
+    H: JrMessageHandler<RxRole>,
+{
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        format!(
+            "AdaptRole<{}, {}>({:?})",
+            std::any::type_name::<RxRole>(),
+            std::any::type_name::<TxRole>(),
+            self.handler.describe_chain()
+        )
+    }
+
+    async fn handle_message(
+        &mut self,
+        message: MessageAndCx<RxRole, UntypedMessage, UntypedMessage>,
+    ) -> Result<Handled<MessageAndCx<RxRole, UntypedMessage, UntypedMessage>>, crate::Error> {
+        self.rx_role
+            .receive_message(&self.tx_role, message, &mut self.handler)
+            .await
     }
 }

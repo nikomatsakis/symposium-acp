@@ -14,7 +14,7 @@
 
 use std::fmt::Debug;
 
-use crate::UntypedMessage;
+use crate::{Handled, JrMessageHandler, MessageAndCx, UntypedMessage};
 
 /// Trait for JSON-RPC connection roles.
 ///
@@ -29,6 +29,10 @@ pub trait JrRole: Debug + Clone + Send + 'static {}
 ///
 /// This enables the convenience `send_request` method that doesn't require
 /// explicitly specifying the target role.
+///
+/// **Invariant:** The default counterpart always implies passthrough semantics -
+/// no message transformation is needed when receiving from the default counterpart.
+/// This allows `on_receive_request` to skip the `AdaptRole` wrapper.
 pub trait DefaultCounterpart: JrRole {
     /// The default counterpart role for this role.
     type Counterpart: JrRole + Default;
@@ -55,13 +59,33 @@ pub trait SendsToRole<R: JrRole>: JrRole {
     ) -> Result<UntypedMessage, crate::Error>;
 }
 
-/// Roles that can receive messages from a specific counterpart role.
+/// Roles that can receive messages from a specific sender role.
 ///
-/// This trait provides the transformation logic for messages received from other roles.
+/// This trait provides the logic for handling messages received from other roles,
+/// including any necessary unwrapping (e.g., `SuccessorRequest` envelopes).
+///
 /// For example, a proxy receiving from an agent might need to unwrap messages from
-/// a `Successor` envelope.
-pub trait ReceivesFromRole<R: JrRole>: JrRole {
-    // TODO: Define methods for transforming received messages
+/// a `Successor` envelope before dispatching to the handler, and rewrap unhandled
+/// messages.
+///
+/// Most implementations are passthrough - they simply delegate to the handler.
+/// The `AcpProxy: ReceivesFromRole<AcpAgent>` impl does the successor unwrap/rewrap.
+#[allow(async_fn_in_trait)]
+pub trait ReceivesFromRole<TxRole: JrRole>: JrRole {
+    /// Handle an incoming message from `TxRole`, dispatching to the given handler.
+    ///
+    /// Implementations may transform the message before/after dispatching.
+    /// For example, unwrapping a `SuccessorRequest` envelope and rewrapping
+    /// if the handler returns `Handled::No`.
+    ///
+    /// The `sender` parameter provides the sender role instance, which may
+    /// carry runtime information needed for message transformation.
+    async fn receive_message(
+        &self,
+        sender: &TxRole,
+        message: MessageAndCx<Self>,
+        handler: &mut impl JrMessageHandler<Self>,
+    ) -> Result<Handled<MessageAndCx<Self>>, crate::Error>;
 }
 
 /// Marker trait indicating a role can send a specific message type to a counterpart.
@@ -115,3 +139,14 @@ impl SendsToRole<UntypedRole> for UntypedRole {
 }
 
 impl<M> SendsTo<UntypedRole, M> for UntypedRole {}
+
+impl ReceivesFromRole<UntypedRole> for UntypedRole {
+    async fn receive_message(
+        &self,
+        _sender: &UntypedRole,
+        message: MessageAndCx<Self>,
+        handler: &mut impl JrMessageHandler<Self>,
+    ) -> Result<Handled<MessageAndCx<Self>>, crate::Error> {
+        handler.handle_message(message).await
+    }
+}
