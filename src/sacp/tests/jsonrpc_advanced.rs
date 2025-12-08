@@ -14,7 +14,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<UntypedRole, T>,
+    response: JrResponse<UntypedRole, UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -168,8 +168,8 @@ async fn test_bidirectional_communication() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let side_a_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let side_a = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
+            let side_a = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, UntypedRole, PongResponse>| {
                     request_cx.respond(PongResponse {
                         value: request.value + 1,
                     })
@@ -177,7 +177,7 @@ async fn test_bidirectional_communication() {
             );
 
             let side_b_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let side_b = JrHandlerChain::new();
+            let side_b = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             // Spawn side_a as server
             tokio::task::spawn_local(async move {
@@ -219,8 +219,8 @@ async fn test_request_ids() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, UntypedRole, PongResponse>| {
                     request_cx.respond(PongResponse {
                         value: request.value + 1,
                     })
@@ -228,7 +228,7 @@ async fn test_request_ids() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 server.serve(server_transport).await.ok();
@@ -278,8 +278,8 @@ async fn test_out_of_order_responses() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
-                async |request: SlowRequest, request_cx: JrRequestCx<UntypedRole, SlowResponse>| {
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
+                async |request: SlowRequest, request_cx: JrRequestCx<UntypedRole, UntypedRole, SlowResponse>| {
                     // Simulate delay
                     tokio::time::sleep(tokio::time::Duration::from_millis(request.delay_ms)).await;
                     request_cx.respond(SlowResponse { id: request.id })
@@ -287,7 +287,7 @@ async fn test_out_of_order_responses() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 server.serve(server_transport).await.ok();

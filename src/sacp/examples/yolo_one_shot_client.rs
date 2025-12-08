@@ -12,12 +12,12 @@
 //! ```
 
 use clap::Parser;
-use sacp::JrHandlerChain;
 use sacp::schema::{
     ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
     RequestPermissionRequest, RequestPermissionResponse, SessionNotification, TextContent,
     VERSION as PROTOCOL_VERSION,
 };
+use sacp::{JrHandlerChain, UntypedRole};
 use std::path::PathBuf;
 use tokio::process::Child;
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create transport and connection
     let transport = sacp::ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
-    let connection = JrHandlerChain::new();
+    let connection = JrHandlerChain::new(UntypedRole, UntypedRole);
 
     // Run the client
     connection
@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .with_client(
             transport,
-            |cx: sacp::JrConnectionCx<sacp::UntypedRole>| async move {
+            |cx: sacp::JrConnectionCx<sacp::UntypedRole, sacp::UntypedRole>| async move {
                 // Initialize the agent
                 eprintln!("🤝 Initializing agent...");
                 let init_response = cx

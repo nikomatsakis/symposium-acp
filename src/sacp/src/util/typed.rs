@@ -26,9 +26,9 @@ use crate::{
 /// # use sacp::{MessageAndCx, UntypedRole};
 /// # use sacp::schema::{InitializeRequest, InitializeResponse, PromptRequest, PromptResponse};
 /// # use sacp::util::MatchMessage;
-/// # async fn example(message: MessageAndCx) -> Result<(), sacp::Error> {
+/// # async fn example(message: MessageAndCx<UntypedRole, UntypedRole>) -> Result<(), sacp::Error> {
 /// MatchMessage::new(message)
-///     .if_request(|req: InitializeRequest, cx: sacp::JrRequestCx<UntypedRole, InitializeResponse>| async move {
+///     .if_request(|req: InitializeRequest, cx: sacp::JrRequestCx<UntypedRole, UntypedRole, InitializeResponse>| async move {
 ///         // Handle initialization
 ///         let response = InitializeResponse {
 ///             protocol_version: req.protocol_version,
@@ -40,7 +40,7 @@ use crate::{
 ///         cx.respond(response)
 ///     })
 ///     .await
-///     .if_request(|req: PromptRequest, cx: sacp::JrRequestCx<UntypedRole, PromptResponse>| async move {
+///     .if_request(|req: PromptRequest, cx: sacp::JrRequestCx<UntypedRole, UntypedRole, PromptResponse>| async move {
 ///         // Handle prompts
 ///         let response = PromptResponse {
 ///             stop_reason: sacp::schema::StopReason::EndTurn,
@@ -64,13 +64,13 @@ use crate::{
 /// that handler runs and subsequent handlers are skipped. If parsing fails for all types,
 /// the `otherwise` handler receives the original untyped message.
 #[must_use]
-pub struct MatchMessage<R: JrRole> {
-    state: Result<Handled<MessageAndCx<R>>, crate::Error>,
+pub struct MatchMessage<Local: JrRole, Remote: JrRole> {
+    state: Result<Handled<MessageAndCx<Local, Remote>>, crate::Error>,
 }
 
-impl<R: JrRole> MatchMessage<R> {
+impl<Local: JrRole, Remote: JrRole> MatchMessage<Local, Remote> {
     /// Create a new pattern matcher for the given untyped request message.
-    pub fn new(message: MessageAndCx<R>) -> Self {
+    pub fn new(message: MessageAndCx<Local, Remote>) -> Self {
         Self {
             state: Ok(Handled::No(message)),
         }
@@ -88,10 +88,10 @@ impl<R: JrRole> MatchMessage<R> {
     /// Returns `self` to allow chaining multiple `handle_if` calls.
     pub async fn if_request<Req: JrRequest, H>(
         mut self,
-        op: impl AsyncFnOnce(Req, JrRequestCx<R, Req::Response>) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(Req, JrRequestCx<Local, Remote, Req::Response>) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(Req, JrRequestCx<R, Req::Response>)>,
+        H: crate::IntoHandled<(Req, JrRequestCx<Local, Remote, Req::Response>)>,
     {
         if let Ok(Handled::No(MessageAndCx::Request(untyped_request, untyped_request_cx))) =
             self.state
@@ -142,10 +142,10 @@ impl<R: JrRole> MatchMessage<R> {
     /// Returns `self` to allow chaining multiple `handle_if` calls.
     pub async fn if_notification<N: JrNotification, H>(
         mut self,
-        op: impl AsyncFnOnce(N, JrConnectionCx<R>) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(N, JrConnectionCx<Local, Remote>) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(N, JrConnectionCx<R>)>,
+        H: crate::IntoHandled<(N, JrConnectionCx<Local, Remote>)>,
     {
         if let Ok(Handled::No(MessageAndCx::Notification(untyped_notification, notification_cx))) =
             self.state
@@ -186,7 +186,7 @@ impl<R: JrRole> MatchMessage<R> {
     }
 
     /// Complete matching, returning `Handled::No` if no match was found.
-    pub fn done(self) -> Result<Handled<MessageAndCx<R>>, crate::Error> {
+    pub fn done(self) -> Result<Handled<MessageAndCx<Local, Remote>>, crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(Handled::Yes),
             Ok(Handled::No(message)) => Ok(Handled::No(message)),
@@ -201,7 +201,7 @@ impl<R: JrRole> MatchMessage<R> {
     /// matching chain and get the final result.
     pub async fn otherwise(
         self,
-        op: impl AsyncFnOnce(MessageAndCx<R>) -> Result<(), crate::Error>,
+        op: impl AsyncFnOnce(MessageAndCx<Local, Remote>) -> Result<(), crate::Error>,
     ) -> Result<(), crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(()),
@@ -225,10 +225,10 @@ impl<R: JrRole> MatchMessage<R> {
 /// # Example
 ///
 /// ```
-/// # use sacp::{UntypedMessage, JrConnectionCx};
+/// # use sacp::{UntypedMessage, JrConnectionCx, UntypedRole};
 /// # use sacp::schema::SessionNotification;
 /// # use sacp::util::TypeNotification;
-/// # async fn example(message: UntypedMessage, cx: &JrConnectionCx) -> Result<(), sacp::Error> {
+/// # async fn example(message: UntypedMessage, cx: &JrConnectionCx<UntypedRole, UntypedRole>) -> Result<(), sacp::Error> {
 /// TypeNotification::new(message, cx)
 ///     .handle_if(|notif: SessionNotification| async move {
 ///         // Handle session notifications
@@ -248,8 +248,8 @@ impl<R: JrRole> MatchMessage<R> {
 /// Since notifications don't expect responses, handlers only receive the parsed
 /// notification (not a request context).
 #[must_use]
-pub struct TypeNotification<R: JrRole> {
-    cx: JrConnectionCx<R>,
+pub struct TypeNotification<Local: JrRole, Remote: JrRole> {
+    cx: JrConnectionCx<Local, Remote>,
     state: Option<TypeNotificationState>,
 }
 
@@ -258,9 +258,9 @@ enum TypeNotificationState {
     Handled(Result<(), crate::Error>),
 }
 
-impl<R: JrRole> TypeNotification<R> {
+impl<Local: JrRole, Remote: JrRole> TypeNotification<Local, Remote> {
     /// Create a new pattern matcher for the given untyped notification message.
-    pub fn new(request: UntypedMessage, cx: &JrConnectionCx<R>) -> Self {
+    pub fn new(request: UntypedMessage, cx: &JrConnectionCx<Local, Remote>) -> Self {
         let UntypedMessage { method, params } = request;
         let params: Option<Params> = json_cast(params).expect("valid params");
         Self {

@@ -251,8 +251,8 @@ pub fn process(data: &str) -> Result<String, crate::Error> {
 }
 
 // Helper to create a mock connection for examples
-pub fn mock_connection() -> JrHandlerChain<UntypedRole> {
-    JrHandlerChain::new()
+pub fn mock_connection() -> JrHandlerChain<UntypedRole, UntypedRole> {
+    JrHandlerChain::new(UntypedRole, UntypedRole)
 }
 
 pub trait Make {

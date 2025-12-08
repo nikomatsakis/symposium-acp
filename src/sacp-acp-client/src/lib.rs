@@ -6,7 +6,7 @@ use sacp::mcp_server::McpServiceRegistry;
 use sacp::{JrConnectionCx, schema::NewSessionRequest};
 
 #[extension_trait]
-pub impl AcpClientExt for JrConnectionCx<UntypedRole> {
+pub impl AcpClientExt for JrConnectionCx<UntypedRole, UntypedRole> {
     fn new_session(&self) -> AcpSessionBuilder {
         AcpSessionBuilder::new(self.clone())
     }
@@ -14,11 +14,11 @@ pub impl AcpClientExt for JrConnectionCx<UntypedRole> {
 
 pub struct AcpSessionBuilder {
     request: NewSessionRequest,
-    cx: JrConnectionCx<UntypedRole>,
+    cx: JrConnectionCx<UntypedRole, UntypedRole>,
 }
 
 impl AcpSessionBuilder {
-    pub fn new(cx: JrConnectionCx<UntypedRole>) -> Self {
+    pub fn new(cx: JrConnectionCx<UntypedRole, UntypedRole>) -> Self {
         Self {
             request: NewSessionRequest {
                 cwd: PathBuf::new(),

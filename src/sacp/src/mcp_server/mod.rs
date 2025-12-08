@@ -18,7 +18,7 @@
 //!     .with_mcp_server("my-server", server)?;
 //!
 //! // Use the registry in your handler chain
-//! JrHandlerChain::new()
+//! JrHandlerChain::new(UntypedRole, UntypedRole)
 //!     .with_handler(registry)
 //!     .serve(connection)
 //!     .await?;

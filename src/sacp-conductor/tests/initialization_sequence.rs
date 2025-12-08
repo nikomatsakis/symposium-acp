@@ -8,7 +8,7 @@
 
 use sacp::proxy::JrCxExt;
 use sacp::schema::{AgentCapabilities, InitializeRequest, InitializeResponse};
-use sacp::{Component, JrHandlerChain, MetaCapabilityExt, Proxy};
+use sacp::{Component, JrHandlerChain, MetaCapabilityExt, Proxy, UntypedRole};
 use sacp_conductor::Conductor;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -18,7 +18,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to receive a JSON-RPC response
 async fn recv<T: sacp::JrResponsePayload + Send>(
-    response: sacp::JrResponse<sacp::UntypedRole, T>,
+    response: sacp::JrResponse<sacp::UntypedRole, sacp::UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -73,7 +73,7 @@ impl Component for InitComponent {
         let config = Arc::clone(&self.config);
 
         {
-            JrHandlerChain::new()
+            JrHandlerChain::new(UntypedRole, UntypedRole)
                 .name("init-component")
                 .on_receive_request(async move |mut request: InitializeRequest, request_cx| {
                     let has_proxy_capability = request.has_meta_capability(Proxy);
@@ -114,7 +114,9 @@ impl Component for InitComponent {
 
 async fn run_test_with_components(
     components: Vec<sacp::DynComponent>,
-    editor_task: impl AsyncFnOnce(sacp::JrConnectionCx<sacp::UntypedRole>) -> Result<(), sacp::Error>,
+    editor_task: impl AsyncFnOnce(
+        sacp::JrConnectionCx<sacp::UntypedRole, sacp::UntypedRole>,
+    ) -> Result<(), sacp::Error>,
 ) -> Result<(), sacp::Error> {
     // Set up editor <-> conductor communication
     let (editor_out, conductor_in) = duplex(1024);
@@ -122,7 +124,7 @@ async fn run_test_with_components(
 
     let transport = sacp::ByteStreams::new(editor_out.compat_write(), editor_in.compat());
 
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .name("editor-to-connector")
         .with_spawned(|_cx| async move {
             Conductor::new("conductor".to_string(), components, Default::default())

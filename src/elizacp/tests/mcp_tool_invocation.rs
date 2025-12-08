@@ -6,12 +6,12 @@ use sacp::schema::{
     ContentBlock, InitializeRequest, McpServer, NewSessionRequest, PromptRequest,
     SessionNotification, TextContent,
 };
-use sacp::{Component, JrHandlerChain};
+use sacp::{Component, JrHandlerChain, UntypedRole};
 use std::path::PathBuf;
 
 /// Test helper to receive a JSON-RPC response
 async fn recv<T: sacp::JrResponsePayload + Send>(
-    response: sacp::JrResponse<sacp::UntypedRole, T>,
+    response: sacp::JrResponse<sacp::UntypedRole, sacp::UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -35,7 +35,7 @@ async fn test_elizacp_mcp_tool_call() -> Result<(), sacp::Error> {
     // Create channel to collect session notifications
     let (notification_tx, mut notification_rx) = futures::channel::mpsc::unbounded();
 
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .name("test-client")
         .on_receive_notification({
             let mut notification_tx = notification_tx.clone();

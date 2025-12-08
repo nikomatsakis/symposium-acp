@@ -17,7 +17,7 @@
 //!
 //! impl Component for MyProxy {
 //!     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
-//!         sacp::JrHandlerChain::new()
+//!         sacp::JrHandlerChain::new(UntypedRole, UntypedRole)
 //!             .name("my-proxy")
 //!             // configure handlers here
 //!             .serve(client)
@@ -67,7 +67,7 @@ use crate::Channel;
 /// impl Component for MyProxy {
 ///     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
 ///         // Set up handler chain that forwards to client
-///         sacp::JrHandlerChain::new()
+///         sacp::JrHandlerChain::new(UntypedRole, UntypedRole)
 ///             .name("my-proxy")
 ///             .on_receive_request(async |req: MyRequest, cx| {
 ///                 // Transform and forward request

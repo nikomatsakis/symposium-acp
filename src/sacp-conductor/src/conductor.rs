@@ -193,7 +193,9 @@ impl Conductor {
         self
     }
 
-    pub fn into_handler_chain(self) -> JrHandlerChain<UntypedRole, ConductorMessageHandler> {
+    pub fn into_handler_chain(
+        self,
+    ) -> JrHandlerChain<UntypedRole, UntypedRole, ConductorMessageHandler> {
         let (mut conductor_tx, mut conductor_rx) = mpsc::channel(128 /* chosen arbitrarily */);
 
         let mut state = ConductorHandlerState {
@@ -211,6 +213,7 @@ impl Conductor {
             ConductorMessageHandler {
                 conductor_tx: conductor_tx.clone(),
             },
+            sacp::UntypedRole,
             sacp::UntypedRole,
         )
         .name(self.name)
@@ -270,7 +273,7 @@ struct ConductorHandlerState {
 
     /// The chain of spawned components, ordered from first (index 0) to last.
     /// Initially empty; populated lazily when the first Initialize request is received.
-    components: Vec<JrConnectionCx<UntypedRole>>,
+    components: Vec<JrConnectionCx<UntypedRole, UntypedRole>>,
 
     /// The component list for lazy initialization.
     /// Set to None after components are instantiated.
@@ -292,15 +295,15 @@ struct ConductorHandlerState {
     pending_requests: HashMap<String, (String, String)>,
 }
 
-impl JrMessageHandler<UntypedRole> for ConductorMessageHandler {
+impl JrMessageHandler<UntypedRole, UntypedRole> for ConductorMessageHandler {
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedRole>,
-    ) -> Result<sacp::Handled<MessageAndCx<UntypedRole>>, sacp::Error> {
-        JrHandlerChain::new()
+        message: MessageAndCx<UntypedRole, UntypedRole>,
+    ) -> Result<sacp::Handled<MessageAndCx<UntypedRole, UntypedRole>>, sacp::Error> {
+        JrHandlerChain::new(UntypedRole, UntypedRole)
             .on_receive_message_from_successor({
                 let mut conductor_tx = self.conductor_tx.clone();
-                async move |message: MessageAndCx<UntypedRole>| {
+                async move |message: MessageAndCx<UntypedRole, UntypedRole>| {
                     // If we receive a message from our successor, we must be in proxy mode or else something odd is going on.
                     conductor_tx
                         .send(ConductorMessage::AgentToClient {
@@ -314,7 +317,7 @@ impl JrMessageHandler<UntypedRole> for ConductorMessageHandler {
             // Any incoming messages from the client are client-to-agent messages targeting the first component.
             .on_receive_message({
                 let mut conductor_tx = self.conductor_tx.clone();
-                async move |message: MessageAndCx<UntypedRole>| {
+                async move |message: MessageAndCx<UntypedRole, UntypedRole>| {
                     conductor_tx
                         .send(ConductorMessage::ClientToAgent {
                             target_component_index: 0,
@@ -356,7 +359,7 @@ impl ConductorHandlerState {
     /// For MCP-over-ACP messages, this extracts the inner MCP message.
     /// For regular ACP messages, returns the message as-is.
     fn extract_trace_info<R: sacp::JrRequest, N: sacp::JrNotification>(
-        message: &sacp::MessageAndCx<UntypedRole, R, N>,
+        message: &sacp::MessageAndCx<UntypedRole, UntypedRole, R, N>,
     ) -> Result<(crate::trace::Protocol, String, serde_json::Value), sacp::Error> {
         use sacp::JrMessage;
 
@@ -406,7 +409,7 @@ impl ConductorHandlerState {
     fn trace_client_to_agent<R: sacp::JrRequest, N: sacp::JrNotification>(
         &mut self,
         target_index: usize,
-        message: &sacp::MessageAndCx<UntypedRole, R, N>,
+        message: &sacp::MessageAndCx<UntypedRole, UntypedRole, R, N>,
     ) -> Result<(), sacp::Error> {
         if self.trace_writer.is_none() {
             return Ok(());
@@ -441,7 +444,7 @@ impl ConductorHandlerState {
     fn trace_agent_to_client<R: sacp::JrRequest, N: sacp::JrNotification>(
         &mut self,
         source_index: SourceComponentIndex,
-        message: &sacp::MessageAndCx<UntypedRole, R, N>,
+        message: &sacp::MessageAndCx<UntypedRole, UntypedRole, R, N>,
     ) -> Result<(), sacp::Error> {
         if self.trace_writer.is_none() {
             return Ok(());
@@ -481,7 +484,7 @@ impl ConductorHandlerState {
     /// Trace a response to a previous request.
     fn trace_response(
         &mut self,
-        request_cx: &sacp::JrRequestCx<UntypedRole, serde_json::Value>,
+        request_cx: &sacp::JrRequestCx<UntypedRole, UntypedRole, serde_json::Value>,
         result: &Result<serde_json::Value, sacp::Error>,
     ) {
         let Some(writer) = &mut self.trace_writer else {
@@ -531,7 +534,7 @@ impl ConductorHandlerState {
     ///   through a stdio server that runs on localhost and bridges messages.
     async fn handle_conductor_message(
         &mut self,
-        client: &JrConnectionCx<UntypedRole>,
+        client: &JrConnectionCx<UntypedRole, UntypedRole>,
         message: ConductorMessage,
         conductor_tx: &mut mpsc::Sender<ConductorMessage>,
     ) -> Result<(), sacp::Error> {
@@ -698,9 +701,9 @@ impl ConductorHandlerState {
     fn send_message_to_predecessor_of<Req: JrRequest, N: JrNotification>(
         &mut self,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
-        client: &JrConnectionCx<UntypedRole>,
+        client: &JrConnectionCx<UntypedRole, UntypedRole>,
         source_component_index: SourceComponentIndex,
-        message: MessageAndCx<UntypedRole, Req, N>,
+        message: MessageAndCx<UntypedRole, UntypedRole, Req, N>,
     ) -> Result<(), sacp::Error>
     where
         Req::Response: Send,
@@ -774,10 +777,10 @@ impl ConductorHandlerState {
 
     fn send_request_to_predecessor_of<Req: JrRequest>(
         &mut self,
-        client: &JrConnectionCx<UntypedRole>,
+        client: &JrConnectionCx<UntypedRole, UntypedRole>,
         source_component_index: usize,
         request: Req,
-    ) -> JrResponse<UntypedRole, Req::Response> {
+    ) -> JrResponse<UntypedRole, UntypedRole, Req::Response> {
         if source_component_index == 0 {
             client.send_request(request)
         } else {
@@ -800,7 +803,7 @@ impl ConductorHandlerState {
     ///   proxy's client.
     fn send_notification_to_predecessor_of<N: JrNotification>(
         &mut self,
-        client: &JrConnectionCx<UntypedRole>,
+        client: &JrConnectionCx<UntypedRole, UntypedRole>,
         component_index: usize,
         notification: N,
     ) -> Result<(), sacp::Error> {
@@ -822,8 +825,8 @@ impl ConductorHandlerState {
         &mut self,
         conductor_tx: &mut mpsc::Sender<ConductorMessage>,
         target_component_index: usize,
-        message: MessageAndCx<UntypedRole>,
-        client: &JrConnectionCx<UntypedRole>,
+        message: MessageAndCx<UntypedRole, UntypedRole>,
+        client: &JrConnectionCx<UntypedRole, UntypedRole>,
     ) -> Result<(), sacp::Error> {
         tracing::trace!(
             target_component_index,
@@ -958,9 +961,9 @@ impl ConductorHandlerState {
         &mut self,
         target_component_index: usize,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
-        cx: &JrConnectionCx<UntypedRole>,
+        cx: &JrConnectionCx<UntypedRole, UntypedRole>,
         mut initialize_req: InitializeRequest,
-        request_cx: JrRequestCx<UntypedRole, InitializeResponse>,
+        request_cx: JrRequestCx<UntypedRole, UntypedRole, InitializeResponse>,
     ) -> Result<(), sacp::Error> {
         tracing::debug!(
             target_component_index,
@@ -986,12 +989,13 @@ impl ConductorHandlerState {
             for (component_index, component_spec) in component_specs.into_iter().enumerate() {
                 info!(component_index, "Spawning component");
 
-                let connection = JrHandlerChain::new()
+                let connection = JrHandlerChain::new(UntypedRole, UntypedRole)
                     .name(format!("conductor-to-component({})", component_index))
                     // Intercept messages sent by a proxy component to its successor.
                     .on_receive_message({
                         let mut conductor_tx = conductor_tx.clone();
                         async move |message_cx: MessageAndCx<
+                            UntypedRole,
                             UntypedRole,
                             SuccessorRequest<UntypedMessage>,
                             SuccessorNotification<UntypedMessage>,
@@ -1010,6 +1014,7 @@ impl ConductorHandlerState {
                     .on_receive_message({
                         let mut conductor_tx = conductor_tx.clone();
                         async move |message_cx: MessageAndCx<
+                            UntypedRole,
                             UntypedRole,
                             UntypedMessage,
                             UntypedMessage,
@@ -1155,7 +1160,7 @@ impl ConductorHandlerState {
         target_component_index: usize,
         mut request: NewSessionRequest,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
-        request_cx: JrRequestCx<UntypedRole, NewSessionResponse>,
+        request_cx: JrRequestCx<UntypedRole, UntypedRole, NewSessionResponse>,
     ) -> Result<(), sacp::Error> {
         // Before forwarding the ACP request to the agent, replace ACP servers with stdio-based servers.
         // Collect oneshot senders for delivering session_id to listeners.
@@ -1313,14 +1318,14 @@ pub enum ConductorMessage {
     /// This message will be forwarded "as is" to the component.
     ClientToAgent {
         target_component_index: usize,
-        message: MessageAndCx<UntypedRole>,
+        message: MessageAndCx<UntypedRole, UntypedRole>,
     },
 
     /// A message (request or notification) sent by a component to its client.
     /// This message will be forwarded "as is" to its client.
     AgentToClient {
         source_component_index: SourceComponentIndex,
-        message: MessageAndCx<UntypedRole>,
+        message: MessageAndCx<UntypedRole, UntypedRole>,
     },
 
     /// A pending MCP bridge connection request request.
@@ -1356,7 +1361,7 @@ pub enum ConductorMessage {
     /// to the conductor via TCP. The conductor routes this to the appropriate proxy component.
     McpClientToMcpServer {
         connection_id: String,
-        message: MessageAndCx<UntypedRole>,
+        message: MessageAndCx<UntypedRole, UntypedRole>,
     },
 
     /// Message sent when MCP client disconnects
@@ -1374,7 +1379,7 @@ pub enum ConductorMessage {
     /// The invariant we must ensure in particular is that any requests or notifications
     /// that arrive BEFORE the response will be processed first.
     ForwardResponse {
-        request_cx: JrRequestCx<UntypedRole, serde_json::Value>,
+        request_cx: JrRequestCx<UntypedRole, UntypedRole, serde_json::Value>,
         result: Result<serde_json::Value, sacp::Error>,
     },
 }
@@ -1383,15 +1388,15 @@ trait JrConnectionCxExt {
     fn send_proxied_message_via(
         &self,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
-        message: MessageAndCx<UntypedRole>,
+        message: MessageAndCx<UntypedRole, UntypedRole>,
     ) -> Result<(), sacp::Error>;
 }
 
-impl JrConnectionCxExt for JrConnectionCx<UntypedRole> {
+impl JrConnectionCxExt for JrConnectionCx<UntypedRole, UntypedRole> {
     fn send_proxied_message_via(
         &self,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
-        message: MessageAndCx<UntypedRole>,
+        message: MessageAndCx<UntypedRole, UntypedRole>,
     ) -> Result<(), sacp::Error> {
         match message {
             MessageAndCx::Request(request, request_cx) => self
@@ -1416,7 +1421,7 @@ trait JrRequestCxExt<T: JrResponsePayload> {
     ) -> Result<(), sacp::Error>;
 }
 
-impl<T: JrResponsePayload> JrRequestCxExt<T> for JrRequestCx<UntypedRole, T> {
+impl<T: JrResponsePayload> JrRequestCxExt<T> for JrRequestCx<UntypedRole, UntypedRole, T> {
     async fn respond_via(
         self,
         mut conductor_tx: mpsc::Sender<ConductorMessage>,
@@ -1452,15 +1457,15 @@ pub trait JrResponseExt<T: JrResponsePayload> {
     fn forward_response_via(
         self,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
-        request_cx: JrRequestCx<UntypedRole, T>,
+        request_cx: JrRequestCx<UntypedRole, UntypedRole, T>,
     ) -> Result<(), sacp::Error>;
 }
 
-impl<T: JrResponsePayload> JrResponseExt<T> for JrResponse<UntypedRole, T> {
+impl<T: JrResponsePayload> JrResponseExt<T> for JrResponse<UntypedRole, UntypedRole, T> {
     fn forward_response_via(
         self,
         conductor_tx: &mpsc::Sender<ConductorMessage>,
-        request_cx: JrRequestCx<UntypedRole, T>,
+        request_cx: JrRequestCx<UntypedRole, UntypedRole, T>,
     ) -> Result<(), sacp::Error> {
         let conductor_tx = conductor_tx.clone();
         self.await_when_result_received(async move |result| {

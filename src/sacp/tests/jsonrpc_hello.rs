@@ -15,7 +15,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<UntypedRole, T>,
+    response: JrResponse<UntypedRole, UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -109,9 +109,9 @@ async fn test_hello_world() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
                 async move |request: PingRequest,
-                            request_cx: JrRequestCx<UntypedRole, PongResponse>| {
+                            request_cx: JrRequestCx<UntypedRole, UntypedRole, PongResponse>| {
                     let pong = PongResponse {
                         echo: format!("pong: {}", request.message),
                     };
@@ -120,7 +120,7 @@ async fn test_hello_world() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             // Spawn the server in the background
             tokio::task::spawn_local(async move {
@@ -204,7 +204,7 @@ async fn test_notification() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_notification({
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_notification({
                 let logs = logs_clone.clone();
                 async move |notification: LogNotification, _cx| {
                     logs.lock().unwrap().push(notification.message);
@@ -213,7 +213,7 @@ async fn test_notification() {
             });
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve(server_transport).await {
@@ -275,8 +275,8 @@ async fn test_multiple_sequential_requests() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, UntypedRole, PongResponse>| {
                     let pong = PongResponse {
                         echo: format!("pong: {}", request.message),
                     };
@@ -285,7 +285,7 @@ async fn test_multiple_sequential_requests() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve(server_transport).await {
@@ -331,8 +331,8 @@ async fn test_concurrent_requests() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
-                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, PongResponse>| {
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
+                async |request: PingRequest, request_cx: JrRequestCx<UntypedRole, UntypedRole, PongResponse>| {
                     let pong = PongResponse {
                         echo: format!("pong: {}", request.message),
                     };
@@ -341,7 +341,7 @@ async fn test_concurrent_requests() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 if let Err(e) = server.serve(server_transport).await {

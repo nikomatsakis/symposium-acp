@@ -10,7 +10,7 @@
 
 use sacp::mcp_server::{McpServer, McpServiceRegistry};
 use sacp::proxy::AcpProxyExt;
-use sacp::{Component, JrHandlerChain};
+use sacp::{Component, JrHandlerChain, UntypedRole};
 use sacp_conductor::Conductor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,7 @@ struct ProxyWithEchoServer {
 
 impl Component for ProxyWithEchoServer {
     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
-        JrHandlerChain::new()
+        JrHandlerChain::new(UntypedRole, UntypedRole)
             .name("echo-proxy")
             .provide_mcp(self.registry)
             .proxy()

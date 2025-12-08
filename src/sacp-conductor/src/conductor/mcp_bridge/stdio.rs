@@ -40,7 +40,7 @@ pub async fn run_tcp_listener(
 fn make_stdio_actor(
     stream: TcpStream,
     conductor_tx: mpsc::Sender<ConductorMessage>,
-    to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole>>,
+    to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole, UntypedRole>>,
 ) -> McpBridgeConnectionActor {
     let (read_half, write_half) = stream.into_split();
 

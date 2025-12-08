@@ -2,7 +2,7 @@
 
 use sacp::mcp_server::{McpServer, McpServiceRegistry};
 use sacp::proxy::AcpProxyExt;
-use sacp::{Component, JrHandlerChain};
+use sacp::{Component, JrHandlerChain, UntypedRole};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +37,7 @@ impl Component for ProxyComponent {
                 |f, args, cx| Box::pin(f(args, cx)),
             );
 
-        JrHandlerChain::new()
+        JrHandlerChain::new(UntypedRole, UntypedRole)
             .name("proxy-component")
             .provide_mcp(McpServiceRegistry::default().with_mcp_server("test", test_server)?)
             .proxy()

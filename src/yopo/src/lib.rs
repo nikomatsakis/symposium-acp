@@ -87,9 +87,14 @@ pub async fn prompt_with_callback(
     let prompt_text = prompt_text.to_string();
 
     // Run the client
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .on_receive_message(
-            async |message_and_cx: MessageAndCx<UntypedRole, UntypedMessage, UntypedMessage>| {
+            async |message_and_cx: MessageAndCx<
+                UntypedRole,
+                UntypedRole,
+                UntypedMessage,
+                UntypedMessage,
+            >| {
                 tracing::trace!("received: {:?}", message_and_cx.message());
                 Ok(Handled::No(message_and_cx))
             },
@@ -119,46 +124,48 @@ pub async fn prompt_with_callback(
             })
         })
         .connect_to(component)?
-        .with_client(|cx: sacp::JrConnectionCx<sacp::UntypedRole>| async move {
-            // Initialize the agent
-            let _init_response = cx
-                .send_request(InitializeRequest {
-                    protocol_version: PROTOCOL_VERSION,
-                    client_capabilities: Default::default(),
-                    client_info: None,
-                    meta: None,
-                })
-                .block_task()
-                .await?;
-
-            // Create a new session
-            let new_session_response = cx
-                .send_request(NewSessionRequest {
-                    cwd: PathBuf::from("."),
-                    mcp_servers: vec![],
-                    meta: None,
-                })
-                .block_task()
-                .await?;
-
-            let session_id = new_session_response.session_id;
-
-            // Send the prompt
-            let _prompt_response = cx
-                .send_request(PromptRequest {
-                    session_id,
-                    prompt: vec![ContentBlock::Text(TextContent {
-                        annotations: None,
-                        text: prompt_text,
+        .with_client(
+            |cx: sacp::JrConnectionCx<sacp::UntypedRole, sacp::UntypedRole>| async move {
+                // Initialize the agent
+                let _init_response = cx
+                    .send_request(InitializeRequest {
+                        protocol_version: PROTOCOL_VERSION,
+                        client_capabilities: Default::default(),
+                        client_info: None,
                         meta: None,
-                    })],
-                    meta: None,
-                })
-                .block_task()
-                .await?;
+                    })
+                    .block_task()
+                    .await?;
 
-            Ok(())
-        })
+                // Create a new session
+                let new_session_response = cx
+                    .send_request(NewSessionRequest {
+                        cwd: PathBuf::from("."),
+                        mcp_servers: vec![],
+                        meta: None,
+                    })
+                    .block_task()
+                    .await?;
+
+                let session_id = new_session_response.session_id;
+
+                // Send the prompt
+                let _prompt_response = cx
+                    .send_request(PromptRequest {
+                        session_id,
+                        prompt: vec![ContentBlock::Text(TextContent {
+                            annotations: None,
+                            text: prompt_text,
+                            meta: None,
+                        })],
+                        meta: None,
+                    })
+                    .block_task()
+                    .await?;
+
+                Ok(())
+            },
+        )
         .await?;
 
     Ok(())

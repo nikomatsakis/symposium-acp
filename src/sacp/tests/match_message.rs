@@ -1,6 +1,6 @@
 use sacp::{
     Component, Handled, JrHandlerChain, JrMessage, JrMessageHandler, JrRequest, JrResponsePayload,
-    util::MatchMessage,
+    UntypedRole, util::MatchMessage,
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,11 +56,12 @@ impl JrRequest for EchoRequestResponse {
 
 struct EchoHandler;
 
-impl JrMessageHandler<sacp::UntypedRole> for EchoHandler {
+impl JrMessageHandler<sacp::UntypedRole, sacp::UntypedRole> for EchoHandler {
     async fn handle_message(
         &mut self,
-        message: sacp::MessageAndCx<sacp::UntypedRole>,
-    ) -> Result<sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole>>, sacp::Error> {
+        message: sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>,
+    ) -> Result<sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>>, sacp::Error>
+    {
         MatchMessage::new(message)
             .if_request(async move |request: EchoRequestResponse, request_cx| {
                 request_cx.respond(request)
@@ -83,7 +84,7 @@ async fn modify_message_en_route() -> Result<(), sacp::Error> {
 
     impl Component for TestComponent {
         async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
-            JrHandlerChain::new()
+            JrHandlerChain::new(UntypedRole, UntypedRole)
                 .with_handler(PushHandler {
                     message: "b".to_string(),
                 })
@@ -97,11 +98,14 @@ async fn modify_message_en_route() -> Result<(), sacp::Error> {
         message: String,
     }
 
-    impl JrMessageHandler<sacp::UntypedRole> for PushHandler {
+    impl JrMessageHandler<sacp::UntypedRole, sacp::UntypedRole> for PushHandler {
         async fn handle_message(
             &mut self,
-            message: sacp::MessageAndCx<sacp::UntypedRole>,
-        ) -> Result<sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole>>, sacp::Error> {
+            message: sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>,
+        ) -> Result<
+            sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>>,
+            sacp::Error,
+        > {
             MatchMessage::new(message)
                 .if_request(async move |mut request: EchoRequestResponse, request_cx| {
                     request.text.push(self.message.clone());
@@ -116,7 +120,7 @@ async fn modify_message_en_route() -> Result<(), sacp::Error> {
         }
     }
 
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .connect_to(TestComponent)?
         .with_client(async |cx| {
             let result = cx
@@ -148,7 +152,7 @@ async fn modify_message_en_route_inline() -> Result<(), sacp::Error> {
 
     impl Component for TestComponent {
         async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
-            JrHandlerChain::new()
+            JrHandlerChain::new(UntypedRole, UntypedRole)
                 .on_receive_request(async move |mut request: EchoRequestResponse, request_cx| {
                     request.text.push("b".to_string());
                     Ok(Handled::No((request, request_cx)))
@@ -159,7 +163,7 @@ async fn modify_message_en_route_inline() -> Result<(), sacp::Error> {
         }
     }
 
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .connect_to(TestComponent)?
         .with_client(async |cx| {
             let result = cx
@@ -192,7 +196,7 @@ async fn modify_message_and_stop() -> Result<(), sacp::Error> {
 
     impl Component for TestComponent {
         async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
-            JrHandlerChain::new()
+            JrHandlerChain::new(UntypedRole, UntypedRole)
                 .on_receive_request(async move |request: EchoRequestResponse, request_cx| {
                     request_cx.respond(request)
                 })
@@ -206,7 +210,7 @@ async fn modify_message_and_stop() -> Result<(), sacp::Error> {
         }
     }
 
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .connect_to(TestComponent)?
         .with_client(async |cx| {
             let result = cx

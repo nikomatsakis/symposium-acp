@@ -10,14 +10,14 @@
 //! Building an ACP agent is straightforward with sacp's type-safe API:
 //!
 //! ```no_run
-//! use sacp::{JrHandlerChain, MessageAndCx, UntypedMessage};
+//! use sacp::{JrHandlerChain, MessageAndCx, UntypedMessage, UntypedRole};
 //! use sacp::schema::{InitializeRequest, InitializeResponse, AgentCapabilities};
 //! use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 //!
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), sacp::Error> {
 //! // Start by creating an agent connection
-//! JrHandlerChain::new()
+//! JrHandlerChain::new(UntypedRole, UntypedRole)
 //! .name("my-agent") // Give it a name for logging purposes
 //! .on_receive_request(async move |initialize: InitializeRequest, request_cx| {
 //!     // Create one or more request handlers -- these are attempted in order.
@@ -31,7 +31,7 @@
 //!         meta: Default::default(),
 //!     })
 //! })
-//! .on_receive_message(async move |message: MessageAndCx| {
+//! .on_receive_message(async move |message: MessageAndCx<_, _>| {
 //!     // You can also handle any kind of message:
 //!     message.respond_with_error(sacp::util::internal_error("TODO"))
 //! })
@@ -58,7 +58,7 @@
 //!
 //! impl Component for MyAgent {
 //!     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
-//!         JrHandlerChain::new()
+//!         JrHandlerChain::new(UntypedRole, UntypedRole)
 //!             .name("my-agent")
 //!             .on_receive_request(async move |req: PromptRequest, cx| {
 //!                 // Don't block the message loop! Use await_when_* for async work
@@ -113,7 +113,7 @@
 //! to share access to local variables:
 //!
 //! ```rust,ignore
-//! JrHandlerChain::new()
+//! JrHandlerChain::new(UntypedRole, UntypedRole)
 //!     .on_receive_notification(async |notif: SessionUpdate, cx| {
 //!         // Handle notifications from the server
 //!         Ok(())
@@ -201,7 +201,9 @@ pub use jsonrpc::{
     JrResponse, JrResponsePayload, Lines, MessageAndCx, UntypedMessage,
 };
 
-pub use role::{DefaultCounterpart, JrRole, ReceivesFromRole, SendsTo, SendsToRole, UntypedRole};
+pub use role::{
+    Counterpart, DefaultCounterpart, JrRole, ReceivesFromRole, SendsTo, SendsToRole, UntypedRole,
+};
 
 pub use component::{Component, DynComponent};
 

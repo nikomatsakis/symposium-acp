@@ -111,15 +111,15 @@ impl TeeHandler {
     }
 }
 
-impl JrMessageHandler<UntypedRole> for TeeHandler {
+impl JrMessageHandler<UntypedRole, UntypedRole> for TeeHandler {
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "tee"
     }
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedRole>,
-    ) -> Result<Handled<MessageAndCx<UntypedRole>>, sacp::Error> {
+        message: MessageAndCx<UntypedRole, UntypedRole>,
+    ) -> Result<Handled<MessageAndCx<UntypedRole, UntypedRole>>, sacp::Error> {
         match message {
             MessageAndCx::Request(request, request_cx) => {
                 // Allocate a synthetic ID for tracking this request/response pair
@@ -197,7 +197,7 @@ impl Component for Tee {
         });
 
         // Create the handler chain
-        sacp::JrHandlerChain::new()
+        sacp::JrHandlerChain::new(UntypedRole, UntypedRole)
             .name("sacp-tee")
             .with_handler(TeeHandler::new(log_tx))
             .proxy()

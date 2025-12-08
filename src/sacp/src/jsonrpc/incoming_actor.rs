@@ -25,18 +25,19 @@ use super::Handled;
 /// - Converts jsonrpcmsg::Request to UntypedMessage for handlers
 ///
 /// This is the protocol layer - it has no knowledge of how messages arrived.
-pub(super) async fn incoming_protocol_actor<R: JrRole>(
-    json_rpc_cx: &JrConnectionCx<R>,
+pub(super) async fn incoming_protocol_actor<Local: JrRole, Remote: JrRole>(
+    json_rpc_cx: &JrConnectionCx<Local, Remote>,
     transport_rx: mpsc::UnboundedReceiver<Result<jsonrpcmsg::Message, crate::Error>>,
-    dynamic_handler_rx: mpsc::UnboundedReceiver<DynamicHandlerMessage<R>>,
+    dynamic_handler_rx: mpsc::UnboundedReceiver<DynamicHandlerMessage<Local, Remote>>,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
-    mut handler: impl JrMessageHandler<R>,
+    mut handler: impl JrMessageHandler<Local, Remote>,
 ) -> Result<(), crate::Error> {
     let mut my_rx = transport_rx
         .map(IncomingProtocolMsg::Transport)
         .merge(dynamic_handler_rx.map(IncomingProtocolMsg::DynamicHandler));
 
-    let mut dynamic_handlers: FxHashMap<Uuid, Box<dyn DynamicHandler<R>>> = FxHashMap::default();
+    let mut dynamic_handlers: FxHashMap<Uuid, Box<dyn DynamicHandler<Local, Remote>>> =
+        FxHashMap::default();
 
     while let Some(message_result) = my_rx.next().await {
         match message_result {
@@ -89,18 +90,18 @@ pub(super) async fn incoming_protocol_actor<R: JrRole>(
     Ok(())
 }
 
-enum IncomingProtocolMsg<R: JrRole> {
+enum IncomingProtocolMsg<Local: JrRole, Remote: JrRole> {
     Transport(Result<jsonrpcmsg::Message, crate::Error>),
-    DynamicHandler(DynamicHandlerMessage<R>),
+    DynamicHandler(DynamicHandlerMessage<Local, Remote>),
 }
 
 /// Dispatches a JSON-RPC request to the handler.
 /// Report an error back to the server if it does not get handled.
-async fn dispatch_request<R: JrRole>(
-    json_rpc_cx: &JrConnectionCx<R>,
+async fn dispatch_request<Local: JrRole, Remote: JrRole>(
+    json_rpc_cx: &JrConnectionCx<Local, Remote>,
     request: jsonrpcmsg::Request,
-    dynamic_handlers: &mut FxHashMap<Uuid, Box<dyn DynamicHandler<R>>>,
-    handler: &mut impl JrMessageHandler<R>,
+    dynamic_handlers: &mut FxHashMap<Uuid, Box<dyn DynamicHandler<Local, Remote>>>,
+    handler: &mut impl JrMessageHandler<Local, Remote>,
 ) -> Result<(), crate::Error> {
     let message = UntypedMessage::new(&request.method, &request.params).expect("well-formed JSON");
 

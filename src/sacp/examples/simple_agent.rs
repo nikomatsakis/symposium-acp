@@ -4,7 +4,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 #[tokio::main]
 async fn main() -> Result<(), sacp::Error> {
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .name("my-agent") // for debugging
         .on_receive_request(async move |initialize: InitializeRequest, request_cx| {
             // Respond to initialize successfully
@@ -22,7 +22,12 @@ async fn main() -> Result<(), sacp::Error> {
             })
         })
         .on_receive_message(
-            async move |message: MessageAndCx<UntypedRole, UntypedMessage, UntypedMessage>| {
+            async move |message: MessageAndCx<
+                UntypedRole,
+                UntypedRole,
+                UntypedMessage,
+                UntypedMessage,
+            >| {
                 // Respond to any other message with an error
                 message.respond_with_error(sacp::util::internal_error("TODO"))
             },

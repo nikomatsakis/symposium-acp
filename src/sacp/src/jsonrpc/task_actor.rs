@@ -86,14 +86,14 @@ pub(super) async fn task_actor(
     }
 }
 
-pub(crate) struct PendingTask<R: JrRole> {
-    task_fn: Box<dyn PendingTaskFn<R>>,
+pub(crate) struct PendingTask<Local: JrRole, Remote: JrRole> {
+    task_fn: Box<dyn PendingTaskFn<Local, Remote>>,
 }
 
-impl<R: JrRole> PendingTask<R> {
+impl<Local: JrRole, Remote: JrRole> PendingTask<Local, Remote> {
     pub fn new<Fut>(
         location: &'static Location<'static>,
-        task_function: impl FnOnce(JrConnectionCx<R>) -> Fut + Send + 'static,
+        task_function: impl FnOnce(JrConnectionCx<Local, Remote>) -> Fut + Send + 'static,
     ) -> Self
     where
         Fut: Future<Output = Result<(), crate::Error>> + Send + 'static,
@@ -110,20 +110,20 @@ impl<R: JrRole> PendingTask<R> {
         }
     }
 
-    pub fn into_task(self, cx: JrConnectionCx<R>) -> Task {
+    pub fn into_task(self, cx: JrConnectionCx<Local, Remote>) -> Task {
         self.task_fn.into_task(cx)
     }
 }
 
-trait PendingTaskFn<R: JrRole>: 'static + Send {
-    fn into_task(self: Box<Self>, cx: JrConnectionCx<R>) -> Task;
+trait PendingTaskFn<Local: JrRole, Remote: JrRole>: 'static + Send {
+    fn into_task(self: Box<Self>, cx: JrConnectionCx<Local, Remote>) -> Task;
 }
 
-impl<R: JrRole, F> PendingTaskFn<R> for F
+impl<Local: JrRole, Remote: JrRole, F> PendingTaskFn<Local, Remote> for F
 where
-    F: FnOnce(JrConnectionCx<R>) -> Task + 'static + Send,
+    F: FnOnce(JrConnectionCx<Local, Remote>) -> Task + 'static + Send,
 {
-    fn into_task(self: Box<Self>, cx: JrConnectionCx<R>) -> Task {
+    fn into_task(self: Box<Self>, cx: JrConnectionCx<Local, Remote>) -> Task {
         (*self)(cx)
     }
 }

@@ -9,11 +9,11 @@ mod mcp_integration;
 
 use elizacp::ElizaAgent;
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use sacp::JrHandlerChain;
 use sacp::schema::{
     ContentBlock, InitializeRequest, NewSessionRequest, PromptRequest, SessionNotification,
     TextContent,
 };
+use sacp::{JrHandlerChain, UntypedRole};
 use sacp_conductor::Conductor;
 use sacp_conductor::McpBridgeMode;
 
@@ -22,7 +22,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to receive a JSON-RPC response
 async fn recv<T: sacp::JrResponsePayload + Send>(
-    response: sacp::JrResponse<sacp::UntypedRole, T>,
+    response: sacp::JrResponse<sacp::UntypedRole, sacp::UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -44,7 +44,9 @@ fn conductor_command() -> Vec<String> {
 async fn run_test_with_mode(
     mode: McpBridgeMode,
     components: Vec<sacp::DynComponent>,
-    editor_task: impl AsyncFnOnce(sacp::JrConnectionCx<sacp::UntypedRole>) -> Result<(), sacp::Error>,
+    editor_task: impl AsyncFnOnce(
+        sacp::JrConnectionCx<sacp::UntypedRole, sacp::UntypedRole>,
+    ) -> Result<(), sacp::Error>,
 ) -> Result<(), sacp::Error> {
     // Set up editor <-> conductor communication
     let (editor_out, conductor_in) = duplex(1024);
@@ -52,7 +54,7 @@ async fn run_test_with_mode(
 
     let transport = sacp::ByteStreams::new(editor_out.compat_write(), editor_in.compat());
 
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .name("editor-to-connector")
         .with_spawned(|_cx| async move {
             Conductor::new("conductor".to_string(), components, mode)
@@ -175,7 +177,7 @@ async fn test_agent_handles_prompt() -> Result<(), sacp::Error> {
     // Create channel to collect log events
     let (mut log_tx, mut log_rx) = mpsc::unbounded();
 
-    JrHandlerChain::new()
+    JrHandlerChain::new(UntypedRole, UntypedRole)
         .name("editor-to-connector")
         .on_receive_notification({
             let mut log_tx = log_tx.clone();

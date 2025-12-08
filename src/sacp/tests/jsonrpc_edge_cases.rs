@@ -15,7 +15,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<UntypedRole, T>,
+    response: JrResponse<UntypedRole, UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -151,9 +151,9 @@ async fn test_empty_request() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
                 async |_request: EmptyRequest,
-                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, UntypedRole, SimpleResponse>| {
                     request_cx.respond(SimpleResponse {
                         result: "Got empty request".to_string(),
                     })
@@ -161,7 +161,7 @@ async fn test_empty_request() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 server.serve(server_transport).await.ok();
@@ -202,9 +202,9 @@ async fn test_null_params() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
                 async |_request: OptionalParamsRequest,
-                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, UntypedRole, SimpleResponse>| {
                     request_cx.respond(SimpleResponse {
                         result: "Has params: true".to_string(),
                     })
@@ -212,7 +212,7 @@ async fn test_null_params() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 server.serve(server_transport).await.ok();
@@ -250,9 +250,9 @@ async fn test_server_shutdown() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
                 async |_request: EmptyRequest,
-                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, UntypedRole, SimpleResponse>| {
                     request_cx.respond(SimpleResponse {
                         result: "Got empty request".to_string(),
                     })
@@ -260,7 +260,7 @@ async fn test_server_shutdown() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             let server_handle = tokio::task::spawn_local(async move {
                 server.serve(server_transport).await.ok();
@@ -320,9 +320,9 @@ async fn test_client_disconnect() {
             let server_writer = server_writer.compat_write();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
                 async |_request: EmptyRequest,
-                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, UntypedRole, SimpleResponse>| {
                     request_cx.respond(SimpleResponse {
                         result: "Got empty request".to_string(),
                     })

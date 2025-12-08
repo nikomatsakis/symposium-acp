@@ -17,14 +17,14 @@ pub struct McpBridgeConnectionActor {
     conductor_tx: mpsc::Sender<ConductorMessage>,
 
     /// Receiver for messages from the conductor to the MCP client
-    to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole>>,
+    to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole, UntypedRole>>,
 }
 
 impl McpBridgeConnectionActor {
     pub fn new(
         component: impl Component,
         conductor_tx: mpsc::Sender<ConductorMessage>,
-        to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole>>,
+        to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole, UntypedRole>>,
     ) -> Self {
         Self {
             transport: DynComponent::new(component),
@@ -42,13 +42,13 @@ impl McpBridgeConnectionActor {
             to_mcp_client_rx,
         } = self;
 
-        let result = JrHandlerChain::new()
+        let result = JrHandlerChain::new(UntypedRole, UntypedRole)
             .name(format!("mpc-client-to-conductor({connection_id})"))
             // When we receive a message from the MCP client, forward it to the conductor
             .on_receive_message({
                 let mut conductor_tx = conductor_tx.clone();
                 let connection_id = connection_id.clone();
-                async move |message: sacp::MessageAndCx<UntypedRole>| {
+                async move |message: sacp::MessageAndCx<UntypedRole, UntypedRole>| {
                     conductor_tx
                         .send(ConductorMessage::McpClientToMcpServer {
                             connection_id: connection_id.clone(),

@@ -17,7 +17,7 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 /// Test helper to block and wait for a JSON-RPC response.
 async fn recv<T: JrResponsePayload + Send>(
-    response: JrResponse<UntypedRole, T>,
+    response: JrResponse<UntypedRole, UntypedRole, T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {
@@ -123,7 +123,7 @@ async fn test_invalid_json() {
 
             // No handlers - all requests will return errors
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new();
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             // Spawn server
             tokio::task::spawn_local(async move {
@@ -177,7 +177,7 @@ async fn test_incomplete_line() {
 
     // No handlers needed for EOF test
     let transport = sacp::ByteStreams::new(output, input);
-    let connection = JrHandlerChain::new();
+    let connection = JrHandlerChain::new(UntypedRole, UntypedRole);
 
     // The server should handle EOF mid-message gracefully
     let result = connection.serve(transport).await;
@@ -202,9 +202,9 @@ async fn test_unknown_method() {
 
             // No handlers - all requests will be "method not found"
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new();
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole);
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             // Spawn server
             tokio::task::spawn_local(async move {
@@ -288,9 +288,9 @@ async fn test_handler_returns_error() {
             let (server_reader, server_writer, client_reader, client_writer) = setup_test_streams();
 
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
                 async |_request: ErrorRequest,
-                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, UntypedRole, SimpleResponse>| {
                     // Explicitly return an error
                     request_cx.respond_with_error(sacp::Error::new((
                         -32000,
@@ -300,7 +300,7 @@ async fn test_handler_returns_error() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 server.serve(server_transport).await.ok();
@@ -382,9 +382,9 @@ async fn test_missing_required_params() {
             // Handler that validates params - since EmptyRequest has no params but we're checking
             // against SimpleRequest which requires a message field, this will fail
             let server_transport = sacp::ByteStreams::new(server_writer, server_reader);
-            let server = JrHandlerChain::new().on_receive_request(
+            let server = JrHandlerChain::new(UntypedRole, UntypedRole).on_receive_request(
                 async |_request: EmptyRequest,
-                       request_cx: JrRequestCx<UntypedRole, SimpleResponse>| {
+                       request_cx: JrRequestCx<UntypedRole, UntypedRole, SimpleResponse>| {
                     // This will be called, but EmptyRequest parsing already succeeded
                     // The test is actually checking if EmptyRequest (no params) fails to parse as SimpleRequest
                     // But with the new API, EmptyRequest parses successfully since it expects no params
@@ -395,7 +395,7 @@ async fn test_missing_required_params() {
             );
 
             let client_transport = sacp::ByteStreams::new(client_writer, client_reader);
-            let client = JrHandlerChain::new();
+            let client = JrHandlerChain::new(UntypedRole, UntypedRole);
 
             tokio::task::spawn_local(async move {
                 server.serve(server_transport).await.ok();
