@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use futures::{SinkExt, channel::mpsc};
 use sacp;
 use sacp::schema::McpServer;
-use sacp::{JrConnectionCx, MessageAndCx, UntypedRole};
+use sacp::{JrConnectionCx, MessageCx, UntypedRole};
 use tokio::net::TcpListener;
 use tracing::info;
 
@@ -33,17 +33,17 @@ pub(super) struct McpBridgeListener {
 #[derive(Clone, Debug)]
 pub struct McpBridgeConnection {
     /// Channel to send messages from MCP server (ACP proxy) to the MCP client (ACP agent).
-    to_mcp_client_tx: mpsc::Sender<MessageAndCx<UntypedRole, UntypedRole>>,
+    to_mcp_client_tx: mpsc::Sender<MessageCx<UntypedRole, UntypedRole>>,
 }
 
 impl McpBridgeConnection {
-    pub fn new(to_mcp_client_tx: mpsc::Sender<MessageAndCx<UntypedRole, UntypedRole>>) -> Self {
+    pub fn new(to_mcp_client_tx: mpsc::Sender<MessageCx<UntypedRole, UntypedRole>>) -> Self {
         Self { to_mcp_client_tx }
     }
 
     pub async fn send(
         &mut self,
-        message: MessageAndCx<UntypedRole, UntypedRole>,
+        message: MessageCx<UntypedRole, UntypedRole>,
     ) -> Result<(), sacp::Error> {
         self.to_mcp_client_tx
             .send(message)

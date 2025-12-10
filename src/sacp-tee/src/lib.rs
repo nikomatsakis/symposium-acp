@@ -5,8 +5,7 @@
 
 use anyhow::Result;
 use sacp::component::Component;
-use sacp::proxy::AcpProxyExt;
-use sacp::{Handled, JrMessageHandler, MessageAndCx, UntypedRole};
+use sacp::{Handled, JrMessageHandler, MessageCx, UntypedRole};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::sync::mpsc;
@@ -118,10 +117,10 @@ impl JrMessageHandler<UntypedRole, UntypedRole> for TeeHandler {
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<UntypedRole, UntypedRole>,
-    ) -> Result<Handled<MessageAndCx<UntypedRole, UntypedRole>>, sacp::Error> {
+        message: MessageCx<UntypedRole, UntypedRole>,
+    ) -> Result<Handled<MessageCx<UntypedRole, UntypedRole>>, sacp::Error> {
         match message {
-            MessageAndCx::Request(request, request_cx) => {
+            MessageCx::Request(request, request_cx) => {
                 // Allocate a synthetic ID for tracking this request/response pair
                 let synthetic_id = self.allocate_id();
 
@@ -155,9 +154,9 @@ impl JrMessageHandler<UntypedRole, UntypedRole> for TeeHandler {
                 });
 
                 // Return unhandled with the wrapped context
-                Ok(Handled::No(MessageAndCx::Request(request, wrapped_cx)))
+                Ok(Handled::No(MessageCx::Request(request, wrapped_cx)))
             }
-            MessageAndCx::Notification(notification, cx) => {
+            MessageCx::Notification(notification, cx) => {
                 // Log the notification
                 let json_msg = JsonRpcMessage::Notification {
                     message: notification.clone(),
@@ -166,7 +165,7 @@ impl JrMessageHandler<UntypedRole, UntypedRole> for TeeHandler {
                 self.log_entry(entry);
 
                 // Return unhandled so it continues down the chain
-                Ok(Handled::No(MessageAndCx::Notification(notification, cx)))
+                Ok(Handled::No(MessageCx::Notification(notification, cx)))
             }
         }
     }

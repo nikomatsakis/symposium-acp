@@ -10,6 +10,9 @@ use futures::{
 use crate::JrConnectionCx;
 use crate::role::JrRole;
 
+pub type TaskTx = mpsc::UnboundedSender<Task>;
+
+#[must_use]
 pub(crate) struct Task {
     future: BoxFuture<'static, Result<(), crate::Error>>,
 }
@@ -17,21 +20,25 @@ pub(crate) struct Task {
 impl Task {
     pub fn new(
         location: &'static Location<'static>,
-        task_future: impl Future<Output = Result<(), crate::Error>> + Send + 'static,
+        task_future: impl IntoFuture<Output = Result<(), crate::Error>, IntoFuture: Send + 'static>,
     ) -> Self {
-        Task { future:
-        futures::FutureExt::map(task_future, |result| match result {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                let data = err.data.clone();
-                Err(err.with_data(serde_json::json! {
-                    {
-                        "spawned_at": format!("{}:{}:{}", location.file(), location.line(), location.column()),
-                        "data": data,
+        let task_future = task_future.into_future();
+        Task {
+            future: futures::FutureExt::map(
+                task_future,
+                |result| match result {
+                    Ok(()) => Ok(()),
+                    Err(err) => {
+                        let data = err.data.clone();
+                        Err(err.with_data(serde_json::json! {
+                            {
+                                "spawned_at": format!("{}:{}:{}", location.file(), location.line(), location.column()),
+                                "data": data,
+                            }
+                        }))
                     }
-                }))
-            }
-        }).boxed()
+                }
+            ).boxed()
         }
     }
 
@@ -44,6 +51,13 @@ impl Task {
         } else {
             self
         }
+    }
+
+    pub fn spawn(self, task_tx: &TaskTx) -> Result<(), crate::Error> {
+        task_tx
+            .unbounded_send(self)
+            .map_err(crate::util::internal_error)?;
+        Ok(())
     }
 }
 

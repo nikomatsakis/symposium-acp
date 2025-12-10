@@ -6,11 +6,9 @@
 //! - [`AcpProxy`] - A proxy that sits between client and agent, potentially transforming messages
 //! - [`AcpConductor`] - The conductor that orchestrates proxies and agents
 
-use std::convert::Infallible;
-
 use crate::{
-    JrMessage, JrNotification, JrRequest, MessageAndCx, UntypedMessage,
-    role::{HasCounterpart, HasRemoteRole, JrRole, SendsTo},
+    JrNotification, JrRequest, MessageCx, UntypedMessage,
+    role::{HasCounterpart, HasRemoteRole, JrRole, RemoteRoleStyle, SendsTo},
     schema::{
         // Client → Agent requests
         AuthenticateRequest,
@@ -19,7 +17,6 @@ use crate::{
         InitializeRequest,
         KillTerminalCommandRequest,
         LoadSessionRequest,
-        METHOD_SUCCESSOR_MESSAGE,
         NewSessionRequest,
         PromptRequest,
         ReadTextFileRequest,
@@ -75,93 +72,16 @@ impl JrRole for ProxyRole {}
 impl HasRemoteRole<ClientRole> for ProxyRole {
     type Counterpart = ConductorRole;
 
-    fn transform_outgoing_request_for(
-        _role: ClientRole,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    fn transform_outgoing_notification_for(
-        _role: ClientRole,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    const PASSTHROUGH_INCOMING: bool = true;
-
-    type Adjunct = Infallible;
-
-    fn incoming_counterpart_to_remote(
-        _remote: ClientRole,
-        _message: &UntypedMessage,
-    ) -> Result<Option<(UntypedMessage, Infallible)>, crate::Error> {
-        Err(crate::util::internal_error("cannot extract"))
-    }
-
-    fn incoming_remote_to_counterpart(
-        _remote: ClientRole,
-        _original_message: UntypedMessage,
-        adjunct: Infallible,
-    ) -> Result<UntypedMessage, crate::Error> {
-        match adjunct {}
+    fn remote_style(_other: ClientRole) -> RemoteRoleStyle {
+        RemoteRoleStyle::Counterpart
     }
 }
 
 impl HasRemoteRole<AgentRole> for ProxyRole {
     type Counterpart = ConductorRole;
 
-    fn transform_outgoing_request_for(
-        _role: AgentRole,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error> {
-        SuccessorMessage {
-            message,
-            meta: None,
-        }
-        .to_untyped_message()
-    }
-
-    fn transform_outgoing_notification_for(
-        _role: AgentRole,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error> {
-        SuccessorMessage {
-            message,
-            meta: None,
-        }
-        .to_untyped_message()
-    }
-
-    const PASSTHROUGH_INCOMING: bool = false;
-
-    type Adjunct = Option<serde_json::Value>;
-
-    fn incoming_counterpart_to_remote(
-        _remote: AgentRole,
-        message: &UntypedMessage,
-    ) -> Result<Option<(UntypedMessage, Option<serde_json::Value>)>, crate::Error> {
-        if message.method == METHOD_SUCCESSOR_MESSAGE {
-            match crate::util::json_cast::<_, SuccessorMessage>(&message.params) {
-                Ok(SuccessorMessage { message, meta }) => Ok(Some((message, meta))),
-                Err(err) => Err(err),
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn incoming_remote_to_counterpart(
-        _remote: AgentRole,
-        transformed_message: UntypedMessage,
-        adjunct: Option<serde_json::Value>,
-    ) -> Result<UntypedMessage, crate::Error> {
-        SuccessorMessage {
-            message: transformed_message,
-            meta: adjunct,
-        }
-        .to_untyped_message()
+    fn remote_style(_other: AgentRole) -> RemoteRoleStyle {
+        RemoteRoleStyle::Successor
     }
 }
 
@@ -261,11 +181,11 @@ impl HasCounterpart<ClientRole> for ConductorRole {}
 // (proxy must explicitly specify Client or Agent as logical target)
 impl HasCounterpart<ConductorRole> for ProxyRole {
     fn default_message_handler(
-        message: MessageAndCx<Self, ConductorRole>,
+        message: MessageCx<Self, ConductorRole>,
     ) -> Result<(), crate::Error> {
         // Default behavior: proxy messages.
         match message {
-            MessageAndCx::Request(request, request_cx) => {
+            MessageCx::Request(request, request_cx) => {
                 let cx = request_cx.connection_cx();
                 match <SuccessorMessage>::parse_request(request.method(), request.params()) {
                     // If we are receiving a request from our successor (the agent),
@@ -286,7 +206,7 @@ impl HasCounterpart<ConductorRole> for ProxyRole {
                 }
             }
 
-            MessageAndCx::Notification(notification, cx) => {
+            MessageCx::Notification(notification, cx) => {
                 match <SuccessorMessage>::parse_notification(
                     notification.method(),
                     notification.params(),

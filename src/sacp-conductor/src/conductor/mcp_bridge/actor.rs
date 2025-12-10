@@ -1,6 +1,6 @@
 use futures::{SinkExt as _, StreamExt as _, channel::mpsc};
 use sacp::schema::McpDisconnectNotification;
-use sacp::{Component, DynComponent, JrHandlerChain, MessageAndCx, UntypedRole};
+use sacp::{Component, DynComponent, JrHandlerChain, MessageCx, UntypedRole};
 use tracing::info;
 
 use crate::conductor::ConductorMessage;
@@ -17,14 +17,14 @@ pub struct McpBridgeConnectionActor {
     conductor_tx: mpsc::Sender<ConductorMessage>,
 
     /// Receiver for messages from the conductor to the MCP client
-    to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole, UntypedRole>>,
+    to_mcp_client_rx: mpsc::Receiver<MessageCx<UntypedRole, UntypedRole>>,
 }
 
 impl McpBridgeConnectionActor {
     pub fn new(
         component: impl Component,
         conductor_tx: mpsc::Sender<ConductorMessage>,
-        to_mcp_client_rx: mpsc::Receiver<MessageAndCx<UntypedRole, UntypedRole>>,
+        to_mcp_client_rx: mpsc::Receiver<MessageCx<UntypedRole, UntypedRole>>,
     ) -> Self {
         Self {
             transport: DynComponent::new(component),
@@ -48,7 +48,7 @@ impl McpBridgeConnectionActor {
             .on_receive_message({
                 let mut conductor_tx = conductor_tx.clone();
                 let connection_id = connection_id.clone();
-                async move |message: sacp::MessageAndCx<UntypedRole, UntypedRole>| {
+                async move |message: sacp::MessageCx<UntypedRole, UntypedRole>| {
                     conductor_tx
                         .send(ConductorMessage::McpClientToMcpServer {
                             connection_id: connection_id.clone(),

@@ -7,7 +7,7 @@ use sacp::schema::{
     NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
     RequestPermissionResponse, SessionNotification, TextContent, VERSION as PROTOCOL_VERSION,
 };
-use sacp::{Component, Handled, JrHandlerChain, MessageAndCx, UntypedMessage, UntypedRole};
+use sacp::{Component, Handled, JrHandlerChain, MessageCx, UntypedMessage, UntypedRole};
 use std::path::PathBuf;
 
 /// Converts a `ContentBlock` to its string representation.
@@ -89,7 +89,7 @@ pub async fn prompt_with_callback(
     // Run the client
     JrHandlerChain::new(UntypedRole, UntypedRole)
         .on_receive_message(
-            async |message_and_cx: MessageAndCx<
+            async |message_and_cx: MessageCx<
                 UntypedRole,
                 UntypedRole,
                 UntypedMessage,

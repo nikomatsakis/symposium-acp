@@ -6,7 +6,7 @@ use fxhash::FxHashMap;
 use uuid::Uuid;
 
 use crate::HasCounterpart;
-use crate::MessageAndCx;
+use crate::MessageCx;
 use crate::UntypedMessage;
 use crate::jsonrpc::JrConnectionCx;
 use crate::jsonrpc::JrMessageHandler;
@@ -113,11 +113,11 @@ where
     let message = UntypedMessage::new(&request.method, &request.params).expect("well-formed JSON");
 
     let mut message_cx = match &request.id {
-        Some(id) => MessageAndCx::Request(
+        Some(id) => MessageCx::Request(
             message,
             JrRequestCx::new(json_rpc_cx, request.method.clone(), id.clone()),
         ),
-        None => MessageAndCx::Notification(message, json_rpc_cx.clone()),
+        None => MessageCx::Notification(message, json_rpc_cx.clone()),
     };
 
     for dynamic_handler in dynamic_handlers.values_mut() {

@@ -8,7 +8,7 @@
 use jsonrpcmsg::Params;
 
 use crate::{
-    Handled, HasCounterpart, JrConnectionCx, JrNotification, JrRequest, JrRequestCx, MessageAndCx,
+    Handled, HasCounterpart, JrConnectionCx, JrNotification, JrRequest, JrRequestCx, MessageCx,
     UntypedMessage, role::JrRole, util::json_cast,
 };
 
@@ -68,7 +68,7 @@ pub struct MatchMessage<Local: JrRole, Counterpart: JrRole>
 where
     Local: HasCounterpart<Counterpart>,
 {
-    state: Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error>,
+    state: Result<Handled<MessageCx<Local, Counterpart>>, crate::Error>,
 }
 
 impl<Local: JrRole, Counterpart: JrRole> MatchMessage<Local, Counterpart>
@@ -76,7 +76,7 @@ where
     Local: HasCounterpart<Counterpart>,
 {
     /// Create a new pattern matcher for the given untyped request message.
-    pub fn new(message: MessageAndCx<Local, Counterpart>) -> Self {
+    pub fn new(message: MessageCx<Local, Counterpart>) -> Self {
         Self {
             state: Ok(Handled::No(message)),
         }
@@ -102,8 +102,7 @@ where
     where
         H: crate::IntoHandled<(Req, JrRequestCx<Local, Counterpart, Req::Response>)>,
     {
-        if let Ok(Handled::No(MessageAndCx::Request(untyped_request, untyped_request_cx))) =
-            self.state
+        if let Ok(Handled::No(MessageCx::Request(untyped_request, untyped_request_cx))) = self.state
         {
             match Req::parse_request(untyped_request.method(), untyped_request.params()) {
                 Some(Ok(typed_request)) => {
@@ -115,7 +114,7 @@ where
                                 // Handler returned the request back, convert to untyped
                                 match request.to_untyped_message() {
                                     Ok(untyped) => {
-                                        self.state = Ok(Handled::No(MessageAndCx::Request(
+                                        self.state = Ok(Handled::No(MessageCx::Request(
                                             untyped,
                                             request_cx.erase_to_json(),
                                         )));
@@ -129,7 +128,7 @@ where
                 }
                 Some(Err(err)) => self.state = Err(err),
                 None => {
-                    self.state = Ok(Handled::No(MessageAndCx::Request(
+                    self.state = Ok(Handled::No(MessageCx::Request(
                         untyped_request,
                         untyped_request_cx,
                     )));
@@ -156,7 +155,7 @@ where
     where
         H: crate::IntoHandled<(N, JrConnectionCx<Local, Counterpart>)>,
     {
-        if let Ok(Handled::No(MessageAndCx::Notification(untyped_notification, notification_cx))) =
+        if let Ok(Handled::No(MessageCx::Notification(untyped_notification, notification_cx))) =
             self.state
         {
             match N::parse_notification(
@@ -171,9 +170,8 @@ where
                                 // Handler returned the notification back, convert to untyped
                                 match notification.to_untyped_message() {
                                     Ok(untyped) => {
-                                        self.state = Ok(Handled::No(MessageAndCx::Notification(
-                                            untyped, cx,
-                                        )));
+                                        self.state =
+                                            Ok(Handled::No(MessageCx::Notification(untyped, cx)));
                                     }
                                     Err(err) => self.state = Err(err),
                                 }
@@ -184,7 +182,7 @@ where
                 }
                 Some(Err(err)) => self.state = Err(err),
                 None => {
-                    self.state = Ok(Handled::No(MessageAndCx::Notification(
+                    self.state = Ok(Handled::No(MessageCx::Notification(
                         untyped_notification,
                         notification_cx,
                     )));
@@ -195,7 +193,7 @@ where
     }
 
     /// Complete matching, returning `Handled::No` if no match was found.
-    pub fn done(self) -> Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error> {
+    pub fn done(self) -> Result<Handled<MessageCx<Local, Counterpart>>, crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(Handled::Yes),
             Ok(Handled::No(message)) => Ok(Handled::No(message)),
@@ -210,7 +208,7 @@ where
     /// matching chain and get the final result.
     pub async fn otherwise(
         self,
-        op: impl AsyncFnOnce(MessageAndCx<Local, Counterpart>) -> Result<(), crate::Error>,
+        op: impl AsyncFnOnce(MessageCx<Local, Counterpart>) -> Result<(), crate::Error>,
     ) -> Result<(), crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(()),

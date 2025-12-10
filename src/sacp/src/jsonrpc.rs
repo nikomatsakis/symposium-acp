@@ -28,7 +28,8 @@ use crate::jsonrpc::dynamic_handler::DynamicHandlerMessage;
 use crate::jsonrpc::handlers::{
     AdaptRole, MessageHandler, NotificationHandler, NullHandler, RequestHandler,
 };
-use crate::jsonrpc::task_actor::{PendingTask, Task};
+use crate::jsonrpc::outgoing_actor::{OutgoingMessageTx, send_raw_message};
+use crate::jsonrpc::task_actor::{PendingTask, Task, TaskTx};
 use crate::role::JrRole;
 use crate::role::UntypedRole;
 use crate::{Component, HasCounterpart, HasRemoteRole, SendsTo};
@@ -74,16 +75,9 @@ pub trait JrMessageHandler {
     /// * `Err` if an internal error occurs (this will bring down the server).
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<
-            Self::Local,
-            <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart,
-        >,
-    ) -> Result<
-        Handled<
-            MessageAndCx<Self::Local, <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart>,
-        >,
-        crate::Error,
-    >;
+        message: MessageCx,
+        cx: JrConnectionCx<Self::Local, <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error>;
 
     /// Returns a debug description of the handler chain for diagnostics
     fn describe_chain(&self) -> impl std::fmt::Debug;
@@ -118,17 +112,11 @@ pub trait JrMessageHandlerSend: Send {
     /// (and return cx) should be used from that point forward.
     fn handle_message(
         &mut self,
-        message: MessageAndCx<
-            Self::Local,
-            <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart,
-        >,
+        message: MessageCx<Self::Local, <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart>,
     ) -> impl Future<
         Output = Result<
             Handled<
-                MessageAndCx<
-                    Self::Local,
-                    <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart,
-                >,
+                MessageCx<Self::Local, <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart>,
             >,
             crate::Error,
         >,
@@ -588,9 +576,8 @@ where
     where
         Req: JrRequest,
         Notif: JrNotification,
-        F: AsyncFnMut(MessageAndCx<H::Local, H::Remote, Req, Notif>) -> Result<T, crate::Error>
-            + Send,
-        T: IntoHandled<MessageAndCx<H::Local, H::Remote, Req, Notif>>,
+        F: AsyncFnMut(MessageCx<H::Local, H::Remote, Req, Notif>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<MessageCx<H::Local, H::Remote, Req, Notif>>,
     {
         self.with_handler(MessageHandler::new(
             <H::Local>::default(),
@@ -635,18 +622,18 @@ where
     ///
     /// `Req` can be either a single request type or an enum of multiple request types.
     /// See the [type-driven dispatch](Self#type-driven-message-dispatch) section for details.
-    pub fn on_receive_request<Req, F, T>(
+    pub fn on_receive_request<Req: JrRequest, F, T>(
         self,
         op: F,
     ) -> JrHandlerChain<ChainedHandler<H, RequestHandler<H::Local, H::Remote, Req, F>>>
     where
-        Req: JrRequest,
         F: AsyncFnMut(
                 Req,
-                JrRequestCx<H::Local, H::Remote, Req::Response>,
+                JrRequestCx<Req::Response>,
+                JrConnectionCx<H::Local, H::Remote>,
             ) -> Result<T, crate::Error>
             + Send,
-        T: IntoHandled<(Req, JrRequestCx<H::Local, H::Remote, Req::Response>)>,
+        T: IntoHandled<(Req, JrRequestCx<Req::Response>)>,
     {
         self.with_handler(RequestHandler::new(
             <H::Local>::default(),
@@ -705,6 +692,28 @@ where
             <H::Remote>::default(),
             op,
         ))
+    }
+
+    /// Register a handler for messages coming from `remote` that can be either requests OR notifications.
+    ///
+    /// This is like [`Self::on_receive_message`] but it allows you to select the specific remote role
+    /// you are looking for. This is relevant to proxies, which may wish to receive messages from either
+    /// their [`AcpClient`] or their [`AcpAgent`].
+    pub fn on_receive_message_from<Req: JrRequest, Notif: JrNotification, Remote: JrRole, F, T>(
+        self,
+        remote: Remote,
+        op: F,
+    ) -> JrHandlerChain<ChainedHandler<H, AdaptRole<MessageHandler<H::Local, Remote, Req, Notif, F>>>>
+    where
+        H::Local: HasRemoteRole<Remote, Counterpart = H::Remote>,
+        F: AsyncFnMut(MessageCx<H::Local, H::Remote, Req, Notif>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<MessageCx<H::Local, H::Remote, Req, Notif>>,
+    {
+        self.with_handler(AdaptRole::new(MessageHandler::new(
+            <H::Local>::default(),
+            remote,
+            op,
+        )))
     }
 
     /// Register a handler for JSON-RPC requests from a specific sender role.
@@ -811,7 +820,7 @@ where
         // Spawn pending tasks
         for pending_task in pending_tasks {
             let task = pending_task.into_task(cx.clone());
-            cx.spawn_task(task)?;
+            task.spawn(&cx.task_tx)?;
         }
 
         Ok(JrConnection {
@@ -901,8 +910,8 @@ where
     /// ```
     pub async fn apply(
         &mut self,
-        message: MessageAndCx<H::Local, H::Remote>,
-    ) -> Result<Handled<MessageAndCx<H::Local, H::Remote>>, crate::Error> {
+        message: MessageCx<H::Local, H::Remote>,
+    ) -> Result<Handled<MessageCx<H::Local, H::Remote>>, crate::Error> {
         self.handler.handle_message(message).await
     }
 
@@ -1232,8 +1241,8 @@ impl<T> IntoHandled<T> for Handled<T> {
 pub struct JrConnectionCx<Local: JrRole, Counterpart: JrRole> {
     local: Local,
     remote: Counterpart,
-    message_tx: mpsc::UnboundedSender<OutgoingMessage>,
-    task_tx: mpsc::UnboundedSender<Task>,
+    message_tx: OutgoingMessageTx,
+    task_tx: TaskTx,
     dynamic_handler_tx: mpsc::UnboundedSender<DynamicHandlerMessage<Local, Counterpart>>,
 }
 
@@ -1315,13 +1324,7 @@ where
     ) -> Result<(), crate::Error> {
         let location = std::panic::Location::caller();
         let task = task.into_future();
-        self.spawn_task(Task::new(location, task))
-    }
-
-    fn spawn_task(&self, task: Task) -> Result<(), crate::Error> {
-        self.task_tx
-            .unbounded_send(task)
-            .map_err(crate::util::internal_error)
+        Task::new(location, task).spawn(&self.task_tx)
     }
 
     /// Spawn a JSON-RPC connection in the background and return a [`JrConnectionCx`] for sending messages to it.
@@ -1367,8 +1370,7 @@ where
     ) -> Result<JrConnectionCx<H::Local, H::Remote>, crate::Error> {
         let cx = connection.cx.clone();
         let future = serve_future(connection);
-        let task = Task::new(std::panic::Location::caller(), future);
-        self.spawn_task(task)?;
+        Task::new(std::panic::Location::caller(), future).spawn(&self.task_tx)?;
         Ok(cx)
     }
 
@@ -1376,14 +1378,12 @@ where
     ///
     /// The request context's response type matches the request's response type,
     /// enabling type-safe message forwarding.
-    pub fn send_proxied_message_to<MessageLocal, MessageCounterpart, Remote, Req, Notif>(
+    pub fn send_proxied_message_to<Remote, Req, Notif>(
         &self,
         remote: Remote,
-        message: MessageAndCx<MessageLocal, MessageCounterpart, Req, Notif>,
+        message: MessageCx<Req, Notif>,
     ) -> Result<(), crate::Error>
     where
-        MessageLocal: JrRole + HasCounterpart<MessageCounterpart>,
-        MessageCounterpart: JrRole,
         Remote: JrRole,
         Req: JrRequest<Response: Send>,
         Notif: JrNotification,
@@ -1391,10 +1391,10 @@ where
             + SendsTo<Remote, Notif, Counterpart = Counterpart>,
     {
         match message {
-            MessageAndCx::Request(request, request_cx) => self
+            MessageCx::Request(request, request_cx) => self
                 .send_request_to(remote, request)
                 .forward_to_request_cx(request_cx),
-            MessageAndCx::Notification(notification, _) => {
+            MessageCx::Notification(notification) => {
                 self.send_notification_to(remote, notification)
             }
         }
@@ -1452,9 +1452,8 @@ where
     ///
     /// This is a convenience method that uses the connection's remote role.
     /// For explicit control over the target role, use [`send_request_to`](Self::send_request_to).
-    pub fn send_request<Req>(&self, request: Req) -> JrResponse<Local, Counterpart, Req::Response>
+    pub fn send_request<Req: JrRequest>(&self, request: Req) -> JrResponse<Req::Response>
     where
-        Req: JrRequest,
         Local: SendsTo<Counterpart, Req>,
     {
         self.send_request_to(Counterpart::default(), request)
@@ -1468,64 +1467,53 @@ where
         &self,
         remote: Remote,
         request: Req,
-    ) -> JrResponse<Local, Counterpart, Req::Response>
+    ) -> JrResponse<Req::Response>
     where
         Local: SendsTo<Remote, Req, Counterpart = Counterpart>,
     {
         let method = request.method().to_string();
         let (response_tx, response_rx) = oneshot::channel();
-        match request.to_untyped_message() {
+        match Local::remote_style(remote).transform_outgoing_message(request) {
             Ok(untyped) => {
                 // Transform the message for the target role
-                match Local::transform_outgoing_request_for(remote, untyped) {
-                    Ok(transformed) => {
-                        let params = crate::util::json_cast(transformed.params).ok();
-                        let message = OutgoingMessage::Request {
-                            method: transformed.method.clone(),
-                            params,
+                let params = crate::util::json_cast(untyped.params).ok();
+                let message = OutgoingMessage::Request {
+                    method: untyped.method.clone(),
+                    params,
+                    response_tx,
+                };
+
+                match self.message_tx.unbounded_send(message) {
+                    Ok(()) => (),
+                    Err(error) => {
+                        let OutgoingMessage::Request {
+                            method,
                             response_tx,
+                            ..
+                        } = error.into_inner()
+                        else {
+                            unreachable!();
                         };
 
-                        match self.message_tx.unbounded_send(message) {
-                            Ok(()) => (),
-                            Err(error) => {
-                                let OutgoingMessage::Request {
-                                    method,
-                                    response_tx,
-                                    ..
-                                } = error.into_inner()
-                                else {
-                                    unreachable!();
-                                };
-
-                                response_tx
-                                    .send(Err(communication_failure(format!(
-                                        "failed to send outgoing request `{method}"
-                                    ))))
-                                    .unwrap();
-                            }
-                        }
-                    }
-                    Err(e) => {
                         response_tx
-                            .send(Err(communication_failure(format!(
-                                "failed to transform request `{method}`: {e}"
+                            .send(Err(crate::util::internal_error(format!(
+                                "failed to send outgoing request `{method}"
                             ))))
                             .unwrap();
                     }
                 }
             }
 
-            Err(_) => {
+            Err(err) => {
                 response_tx
-                    .send(Err(communication_failure(format!(
-                        "failed to create untyped request for `{method}"
+                    .send(Err(crate::util::internal_error(format!(
+                        "failed to create untyped request for `{method}`: {err}"
                     ))))
                     .unwrap();
             }
         }
 
-        JrResponse::new(method.clone(), self.clone(), response_rx)
+        JrResponse::new(method.clone(), self.task_tx.clone(), response_rx)
             .map(move |json| <Req::Response>::from_value(&method, json))
     }
 
@@ -1566,31 +1554,20 @@ where
     where
         Local: SendsTo<Remote, N, Counterpart = Counterpart>,
     {
-        let untyped = notification.to_untyped_message()?;
-        let transformed = Local::transform_outgoing_notification_for(remote, untyped)?;
+        let transformed = Local::remote_style(remote).transform_outgoing_message(notification)?;
         let params = crate::util::json_cast(transformed.params).ok();
-        self.send_raw_message(OutgoingMessage::Notification {
-            method: transformed.method,
-            params,
-        })
+        send_raw_message(
+            &self.message_tx,
+            OutgoingMessage::Notification {
+                method: transformed.method,
+                params,
+            },
+        )
     }
 
     /// Send an error notification (no reply expected).
     pub fn send_error_notification(&self, error: crate::Error) -> Result<(), crate::Error> {
-        self.send_raw_message(OutgoingMessage::Error { error })
-    }
-
-    fn send_raw_message(&self, message: OutgoingMessage) -> Result<(), crate::Error> {
-        match &message {
-            OutgoingMessage::Response { id, response } => match response {
-                Ok(_) => tracing::debug!(?id, "send_raw_message: queuing success response"),
-                Err(e) => tracing::warn!(?id, ?e, "send_raw_message: queuing error response"),
-            },
-            _ => {}
-        }
-        self.message_tx
-            .unbounded_send(message)
-            .map_err(communication_failure)
+        send_raw_message(&self.message_tx, OutgoingMessage::Error { error })
     }
 
     /// Register a dynamic message handler, used to intercept messages specific to a particular session
@@ -1611,7 +1588,7 @@ where
                 uuid.clone(),
                 Box::new(handler),
             ))
-            .map_err(communication_failure)?;
+            .map_err(crate::util::internal_error)?;
 
         Ok(DynamicHandlerRegistration::new(uuid, self.clone()))
     }
@@ -1718,11 +1695,9 @@ where
 /// See the [Event Loop and Concurrency](JrConnection#event-loop-and-concurrency)
 /// section for more details.
 #[must_use]
-pub struct JrRequestCx<Local: JrRole, Counterpart: JrRole, T: JrResponsePayload = serde_json::Value>
-{
+pub struct JrRequestCx<T: JrResponsePayload = serde_json::Value> {
     /// The context to use to send outgoing messages and replies.
-    cx: JrConnectionCx<Local, Counterpart>,
-
+    message_tx: OutgoingMessageTx,
     /// The method of the request.
     method: String,
 
@@ -1737,9 +1712,7 @@ pub struct JrRequestCx<Local: JrRole, Counterpart: JrRole, T: JrResponsePayload 
     >,
 }
 
-impl<Local: JrRole, Counterpart: JrRole, T: JrResponsePayload> std::fmt::Debug
-    for JrRequestCx<Local, Counterpart, T>
-{
+impl<T: JrResponsePayload> std::fmt::Debug for JrRequestCx<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JrRequestCx")
             .field("cx", &self.cx)
@@ -1750,14 +1723,11 @@ impl<Local: JrRole, Counterpart: JrRole, T: JrResponsePayload> std::fmt::Debug
     }
 }
 
-impl<Local: JrRole, Counterpart: JrRole> JrRequestCx<Local, Counterpart, serde_json::Value>
-where
-    Local: HasCounterpart<Counterpart>,
-{
+impl JrRequestCx<serde_json::Value> {
     /// Create a new method context.
-    fn new(cx: &JrConnectionCx<Local, Counterpart>, method: String, id: jsonrpcmsg::Id) -> Self {
+    fn new(message_tx: OutgoingMessageTx, method: String, id: jsonrpcmsg::Id) -> Self {
         Self {
-            cx: cx.clone(),
+            message_tx,
             method,
             id,
             make_json: SendBoxFnOnce::new(move |_method, value| value),
@@ -1765,7 +1735,7 @@ where
     }
 
     /// Cast this request context to a different response type
-    pub fn cast<T: JrResponsePayload>(self) -> JrRequestCx<Local, Counterpart, T> {
+    pub fn cast<T: JrResponsePayload>(self) -> JrRequestCx<T> {
         self.wrap_params(move |method, value| match value {
             Ok(value) => T::into_json(value, &method),
             Err(e) => Err(e),
@@ -1773,10 +1743,7 @@ where
     }
 }
 
-impl<Local: JrRole, Counterpart: JrRole, T: JrResponsePayload> JrRequestCx<Local, Counterpart, T>
-where
-    Local: HasCounterpart<Counterpart>,
-{
+impl<T: JrResponsePayload> JrRequestCx<T> {
     /// Method of the incoming request
     pub fn method(&self) -> &str {
         &self.method
@@ -1794,14 +1761,14 @@ where
     /// Convert to a `JrRequestCx` that expects a JSON value
     /// and which checks (dynamically) that the JSON value it receives
     /// can be converted to `T`.
-    pub fn erase_to_json(self) -> JrRequestCx<Local, Counterpart, serde_json::Value> {
+    pub fn erase_to_json(self) -> JrRequestCx<serde_json::Value> {
         self.wrap_params(|method, value| T::from_value(&method, value?))
     }
 
     /// Return a new JrResponse that expects a response of type U and serializes it.
-    pub fn wrap_method(self, method: String) -> JrRequestCx<Local, Counterpart, T> {
+    pub fn wrap_method(self, method: String) -> JrRequestCx<T> {
         JrRequestCx {
-            cx: self.cx,
+            message_tx: self.message_tx,
             method,
             id: self.id,
             make_json: self.make_json,
@@ -1814,9 +1781,9 @@ where
     pub fn wrap_params<U: JrResponsePayload>(
         self,
         wrap_fn: impl FnOnce(&str, Result<U, crate::Error>) -> Result<T, crate::Error> + Send + 'static,
-    ) -> JrRequestCx<Local, Counterpart, U> {
+    ) -> JrRequestCx<U> {
         JrRequestCx {
-            cx: self.cx,
+            message_tx: self.message_tx,
             method: self.method,
             id: self.id,
             make_json: SendBoxFnOnce::new(move |method: String, input: Result<U, crate::Error>| {
@@ -1826,11 +1793,6 @@ where
         }
     }
 
-    /// Get the underlying JSON RPC context.
-    pub fn connection_cx(&self) -> JrConnectionCx<Local, Counterpart> {
-        self.cx.clone()
-    }
-
     /// Respond to the JSON-RPC request with either a value (`Ok`) or an error (`Err`).
     pub fn respond_with_result(
         self,
@@ -1838,10 +1800,13 @@ where
     ) -> Result<(), crate::Error> {
         tracing::debug!(id = ?self.id, "respond called");
         let json = self.make_json.call_tuple((self.method.clone(), response));
-        self.cx.send_raw_message(OutgoingMessage::Response {
-            id: self.id,
-            response: json,
-        })
+        send_raw_message(
+            &self.message_tx,
+            OutgoingMessage::Response {
+                id: self.id,
+                response: json,
+            },
+        )
     }
 
     /// Respond to the JSON-RPC request with a value.
@@ -1859,24 +1824,7 @@ where
         tracing::debug!(id = ?self.id, ?error, "respond_with_error called");
         self.respond_with_result(Err(error))
     }
-
-    /// Convert this request context to use untyped roles.
-    ///
-    /// This is useful when you need to forward messages through a routing layer
-    /// that doesn't care about the specific role types.
-    pub fn into_untyped(self) -> JrRequestCx<UntypedRole, UntypedRole, T> {
-        JrRequestCx {
-            cx: self.cx.into_untyped(),
-            method: self.method,
-            id: self.id,
-            make_json: self.make_json,
-        }
-    }
 }
-
-impl JrRequestCx<UntypedRole, UntypedRole> {}
-
-impl JrRequestCx<UntypedRole, UntypedRole> {}
 
 /// Common bounds for any JSON-RPC message.
 pub trait JrMessage: 'static + Debug + Sized + Send + Clone {
@@ -1942,48 +1890,33 @@ pub trait JrRequest: JrMessage {
 /// By default, both are `UntypedMessage` for dynamic dispatch.
 /// The request context's response type matches the request's response type.
 #[derive(Debug)]
-pub enum MessageAndCx<
-    Local: JrRole,
-    Counterpart: JrRole,
-    Req: JrRequest = UntypedMessage,
-    Notif: JrMessage = UntypedMessage,
-> {
+pub enum MessageCx<Req: JrRequest = UntypedMessage, Notif: JrMessage = UntypedMessage> {
     /// Incoming request and the context where the response should be sent.
-    Request(Req, JrRequestCx<Local, Counterpart, Req::Response>),
+    Request(Req, JrRequestCx<Req::Response>),
 
     /// Incoming notification.
-    Notification(Notif, JrConnectionCx<Local, Counterpart>),
+    Notification(Notif),
 }
 
-impl<Local: JrRole, Counterpart: JrRole, Req: JrRequest, Notif: JrMessage>
-    MessageAndCx<Local, Counterpart, Req, Notif>
-where
-    Local: HasCounterpart<Counterpart>,
-{
+impl<Req: JrRequest, Notif: JrMessage> MessageCx<Req, Notif> {
     /// Map the request and notification types to new types.
     pub fn map<Req1, Notif1>(
         self,
-        map_request: impl FnOnce(
-            Req,
-            JrRequestCx<Local, Counterpart, Req::Response>,
-        ) -> (Req1, JrRequestCx<Local, Counterpart, Req1::Response>),
-        map_notification: impl FnOnce(
-            Notif,
-            JrConnectionCx<Local, Counterpart>,
-        ) -> (Notif1, JrConnectionCx<Local, Counterpart>),
-    ) -> MessageAndCx<Local, Counterpart, Req1, Notif1>
+        map_request: impl FnOnce(Req, JrRequestCx<Req::Response>) -> (Req1, JrRequestCx<Req1::Response>),
+        map_notification: impl FnOnce(Notif) -> Notif1,
+    ) -> MessageCx<Req1, Notif1>
     where
         Req1: JrRequest<Response: Send>,
         Notif1: JrMessage,
     {
         match self {
-            MessageAndCx::Request(request, cx) => {
+            MessageCx::Request(request, cx) => {
                 let (new_request, new_cx) = map_request(request, cx);
-                MessageAndCx::Request(new_request, new_cx)
+                MessageCx::Request(new_request, new_cx)
             }
-            MessageAndCx::Notification(notification, cx) => {
-                let (new_notification, new_cx) = map_notification(notification, cx);
-                MessageAndCx::Notification(new_notification, new_cx)
+            MessageCx::Notification(notification) => {
+                let new_notification = map_notification(notification);
+                MessageCx::Notification(new_notification)
             }
         }
     }
@@ -1993,97 +1926,78 @@ where
     /// If this message is a request, this error becomes the reply to the request.
     ///
     /// If this message is a notification, the error is sent as a notification.
-    pub fn respond_with_error(self, error: crate::Error) -> Result<(), crate::Error> {
+    pub fn respond_with_error<Local: JrRole, Counterpart: JrRole>(
+        self,
+        error: crate::Error,
+        cx: JrConnectionCx<Local, Counterpart>,
+    ) -> Result<(), crate::Error>
+    where
+        Local: HasCounterpart<Counterpart>,
+    {
         match self {
-            MessageAndCx::Request(_, cx) => cx.respond_with_error(error),
-            MessageAndCx::Notification(_, cx) => cx.send_error_notification(error),
+            MessageCx::Request(_, request_cx) => request_cx.respond_with_error(error),
+            MessageCx::Notification(_) => cx.send_error_notification(error),
         }
     }
 
     /// Convert to a `JrRequestCx` that expects a JSON value
     /// and which checks (dynamically) that the JSON value it receives
     /// can be converted to `T`.
-    pub fn erase_to_json(self) -> Result<MessageAndCx<Local, Counterpart>, crate::Error> {
+    pub fn erase_to_json(self) -> Result<MessageCx, crate::Error> {
         match self {
-            MessageAndCx::Request(response, request_cx) => Ok(MessageAndCx::Request(
+            MessageCx::Request(response, request_cx) => Ok(MessageCx::Request(
                 response.to_untyped_message()?,
                 request_cx.erase_to_json(),
             )),
-            MessageAndCx::Notification(notification, cx) => Ok(MessageAndCx::Notification(
-                notification.to_untyped_message()?,
-                cx,
-            )),
+            MessageCx::Notification(notification) => {
+                Ok(MessageCx::Notification(notification.to_untyped_message()?))
+            }
         }
     }
 
     /// Convert the message to an untyped message.
     pub fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
         match self {
-            MessageAndCx::Request(request, _) => request.to_untyped_message(),
-            MessageAndCx::Notification(notification, _) => notification.to_untyped_message(),
+            MessageCx::Request(request, _) => request.to_untyped_message(),
+            MessageCx::Notification(notification) => notification.to_untyped_message(),
         }
     }
 
     /// Returns the request ID if this is a request, None if notification.
     pub fn id(&self) -> Option<serde_json::Value> {
         match self {
-            MessageAndCx::Request(_, cx) => Some(cx.id()),
-            MessageAndCx::Notification(_, _) => None,
-        }
-    }
-
-    /// Convert this message context to use untyped roles and message types.
-    ///
-    /// This is useful when you need to forward messages through a routing layer
-    /// that doesn't care about the specific role or message types.
-    pub fn into_untyped(
-        self,
-    ) -> Result<MessageAndCx<UntypedRole, UntypedRole, UntypedMessage, UntypedMessage>, crate::Error>
-    {
-        match self {
-            MessageAndCx::Request(request, request_cx) => Ok(MessageAndCx::Request(
-                request.to_untyped_message()?,
-                request_cx.erase_to_json().into_untyped(),
-            )),
-            MessageAndCx::Notification(notification, cx) => Ok(MessageAndCx::Notification(
-                notification.to_untyped_message()?,
-                cx.into_untyped(),
-            )),
+            MessageCx::Request(_, cx) => Some(cx.id()),
+            MessageCx::Notification(_) => None,
         }
     }
 
     /// Returns the method of the message (only available for UntypedMessage).
     pub fn method(&self) -> &str {
         match self {
-            MessageAndCx::Request(msg, _) => msg.method(),
-            MessageAndCx::Notification(msg, _) => msg.method(),
+            MessageCx::Request(msg, _) => msg.method(),
+            MessageCx::Notification(msg) => msg.method(),
         }
     }
 }
 
-impl<Local: JrRole, Counterpart: JrRole> MessageAndCx<Local, Counterpart>
-where
-    Local: HasCounterpart<Counterpart>,
-{
+impl<M: JrRequest + JrNotification> MessageCx<M, M> {
     /// Returns the message of the message (only available for UntypedMessage).
-    pub fn message(&self) -> &UntypedMessage {
+    pub fn message(&self) -> &M {
         match self {
-            MessageAndCx::Request(msg, _) => msg,
-            MessageAndCx::Notification(msg, _) => msg,
+            MessageCx::Request(msg, _) => msg,
+            MessageCx::Notification(msg) => msg,
         }
     }
 
     /// Map the request/notification message.
-    pub fn map_message(
+    pub(crate) fn try_map_message(
         self,
-        map_message: impl FnOnce(UntypedMessage) -> Result<UntypedMessage, crate::Error>,
-    ) -> Result<MessageAndCx<Local, Counterpart>, crate::Error> {
+        map_message: impl FnOnce(M) -> Result<M, crate::Error>,
+    ) -> Result<MessageCx<M>, crate::Error> {
         match self {
-            MessageAndCx::Request(request, cx) => {
-                Ok(MessageAndCx::Request(map_message(request)?, cx))
-            }
-            MessageAndCx::Notification(notification, cx) => {
-                Ok(MessageAndCx::Notification(map_message(notification)?, cx))
+            MessageCx::Request(request, cx) => Ok(MessageCx::Request(map_message(request)?, cx)),
+            MessageCx::Notification(notification) => {
+                Ok(MessageCx::<M, M>::Notification(map_message(notification)?))
             }
         }
     }
@@ -2231,35 +2145,29 @@ impl JrNotification for UntypedMessage {
 /// If you block the event loop while waiting for a response, the connection cannot process
 /// the incoming response message, creating a deadlock. This API design prevents that footgun
 /// by making blocking explicit and encouraging non-blocking patterns.
-pub struct JrResponse<Local: JrRole, Counterpart: JrRole, T = serde_json::Value> {
+pub struct JrResponse<T> {
     method: String,
-    connection_cx: JrConnectionCx<Local, Counterpart>,
+    task_tx: TaskTx,
     response_rx: oneshot::Receiver<Result<serde_json::Value, crate::Error>>,
     to_result: Box<dyn Fn(serde_json::Value) -> Result<T, crate::Error> + Send>,
 }
 
-impl<Local: JrRole, Counterpart: JrRole> JrResponse<Local, Counterpart, serde_json::Value>
-where
-    Local: HasCounterpart<Counterpart>,
-{
+impl JrResponse<serde_json::Value> {
     fn new(
         method: String,
-        connection_cx: JrConnectionCx<Local, Counterpart>,
+        task_tx: mpsc::UnboundedSender<Task>,
         response_rx: oneshot::Receiver<Result<serde_json::Value, crate::Error>>,
     ) -> Self {
         Self {
             method,
             response_rx,
-            connection_cx,
+            task_tx,
             to_result: Box::new(Ok),
         }
     }
 }
 
-impl<T: JrResponsePayload, Local: JrRole, Counterpart: JrRole> JrResponse<Local, Counterpart, T>
-where
-    Local: HasCounterpart<Counterpart>,
-{
+impl<T: JrResponsePayload> JrResponse<T> {
     /// The method of the request this is in response to.
     pub fn method(&self) -> &str {
         &self.method
@@ -2269,14 +2177,11 @@ where
     pub fn map<U>(
         self,
         map_fn: impl Fn(T) -> Result<U, crate::Error> + 'static + Send,
-    ) -> JrResponse<Local, Counterpart, U>
-    where
-        U: JrResponsePayload,
-    {
+    ) -> JrResponse<U> {
         JrResponse {
             method: self.method,
             response_rx: self.response_rx,
-            connection_cx: self.connection_cx,
+            task_tx: self.task_tx,
             to_result: Box::new(move |value| map_fn((self.to_result)(value)?)),
         }
     }
@@ -2332,12 +2237,8 @@ where
     ///
     /// This is equivalent to calling `await_when_result_received` and manually forwarding
     /// the result, but more concise.
-    pub fn forward_to_request_cx<L2: JrRole, C2: JrRole>(
-        self,
-        request_cx: JrRequestCx<L2, C2, T>,
-    ) -> Result<(), crate::Error>
+    pub fn forward_to_request_cx(self, request_cx: JrRequestCx<T>) -> Result<(), crate::Error>
     where
-        L2: HasCounterpart<C2>,
         T: Send,
     {
         self.await_when_result_received(async move |result| request_cx.respond_with_result(result))
@@ -2471,8 +2372,8 @@ where
     #[track_caller]
     pub fn await_when_ok_response_received<F, L2: JrRole, C2: JrRole>(
         self,
-        request_cx: JrRequestCx<L2, C2, T>,
-        task: impl FnOnce(T, JrRequestCx<L2, C2, T>) -> F + 'static + Send,
+        request_cx: JrRequestCx<T>,
+        task: impl FnOnce(T, JrRequestCx<T>) -> F + 'static + Send,
     ) -> Result<(), crate::Error>
     where
         L2: HasCounterpart<C2>,
@@ -2553,16 +2454,11 @@ where
         F: Future<Output = Result<(), crate::Error>> + 'static + Send,
         T: Send,
     {
-        let connection_cx = self.connection_cx.clone();
+        let task_tx = self.task_tx.clone();
         let block_task = self.block_task();
-        connection_cx.spawn(async move { task(block_task.await).await })
+        let location = Location::caller();
+        Task::new(location, async move { task(block_task.await).await }).spawn(&task_tx)
     }
-}
-
-const COMMUNICATION_FAILURE: i32 = -32000;
-
-fn communication_failure(err: impl ToString) -> crate::Error {
-    crate::Error::new((COMMUNICATION_FAILURE, err.to_string()))
 }
 
 // ============================================================================

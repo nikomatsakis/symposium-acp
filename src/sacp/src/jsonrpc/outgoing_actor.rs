@@ -6,6 +6,23 @@ use uuid::Uuid;
 use crate::jsonrpc::OutgoingMessage;
 use crate::jsonrpc::ReplyMessage;
 
+pub type OutgoingMessageTx = mpsc::UnboundedSender<OutgoingMessage>;
+
+pub(crate) fn send_raw_message(
+    tx: &OutgoingMessageTx,
+    message: OutgoingMessage,
+) -> Result<(), crate::Error> {
+    match &message {
+        OutgoingMessage::Response { id, response } => match response {
+            Ok(_) => tracing::debug!(?id, "send_raw_message: queuing success response"),
+            Err(e) => tracing::warn!(?id, ?e, "send_raw_message: queuing error response"),
+        },
+        _ => {}
+    }
+    tx.unbounded_send(message)
+        .map_err(crate::util::internal_error)
+}
+
 /// Outgoing protocol actor: Converts application-level OutgoingMessage to protocol-level jsonrpcmsg::Message.
 ///
 /// This actor handles JSON-RPC protocol semantics:

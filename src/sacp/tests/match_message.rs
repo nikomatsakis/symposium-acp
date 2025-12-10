@@ -59,8 +59,8 @@ struct EchoHandler;
 impl JrMessageHandler<sacp::UntypedRole, sacp::UntypedRole> for EchoHandler {
     async fn handle_message(
         &mut self,
-        message: sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>,
-    ) -> Result<sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>>, sacp::Error>
+        message: sacp::MessageCx<sacp::UntypedRole, sacp::UntypedRole>,
+    ) -> Result<sacp::Handled<sacp::MessageCx<sacp::UntypedRole, sacp::UntypedRole>>, sacp::Error>
     {
         MatchMessage::new(message)
             .if_request(async move |request: EchoRequestResponse, request_cx| {
@@ -101,11 +101,9 @@ async fn modify_message_en_route() -> Result<(), sacp::Error> {
     impl JrMessageHandler<sacp::UntypedRole, sacp::UntypedRole> for PushHandler {
         async fn handle_message(
             &mut self,
-            message: sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>,
-        ) -> Result<
-            sacp::Handled<sacp::MessageAndCx<sacp::UntypedRole, sacp::UntypedRole>>,
-            sacp::Error,
-        > {
+            message: sacp::MessageCx<sacp::UntypedRole, sacp::UntypedRole>,
+        ) -> Result<sacp::Handled<sacp::MessageCx<sacp::UntypedRole, sacp::UntypedRole>>, sacp::Error>
+        {
             MatchMessage::new(message)
                 .if_request(async move |mut request: EchoRequestResponse, request_cx| {
                     request.text.push(self.message.clone());

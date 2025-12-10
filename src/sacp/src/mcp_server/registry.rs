@@ -12,8 +12,7 @@ use crate::schema::{
 use crate::util::MatchMessage;
 use crate::{
     Channel, Component, DynComponent, Handled, HasCounterpart, HasRemoteRole, JrConnectionCx,
-    JrHandlerChain, JrMessageHandlerSend, JrRequestCx, JrRole, MessageAndCx, SendsTo,
-    UntypedMessage,
+    JrHandlerChain, JrMessageHandlerSend, JrRequestCx, JrRole, MessageCx, SendsTo, UntypedMessage,
 };
 use std::sync::{Arc, Mutex};
 
@@ -40,7 +39,7 @@ pub struct McpServiceRegistry<Local: JrRole, Counterpart: JrRole> {
 struct McpServiceRegistryData<Local: JrRole, Counterpart: JrRole> {
     registered_by_name: FxHashMap<String, Arc<RegisteredMcpServer<Local, Counterpart>>>,
     registered_by_url: FxHashMap<String, Arc<RegisteredMcpServer<Local, Counterpart>>>,
-    connections: FxHashMap<String, mpsc::Sender<MessageAndCx<Local, Counterpart>>>,
+    connections: FxHashMap<String, mpsc::Sender<MessageCx<Local, Counterpart>>>,
 }
 
 impl<Local: JrRole, Counterpart: JrRole> McpServiceRegistry<Local, Counterpart>
@@ -199,7 +198,7 @@ where
     fn insert_connection(
         &self,
         connection_id: &str,
-        tx: mpsc::Sender<MessageAndCx<Local, Counterpart>>,
+        tx: mpsc::Sender<MessageCx<Local, Counterpart>>,
     ) {
         self.data
             .lock()
@@ -211,7 +210,7 @@ where
     fn get_connection(
         &self,
         connection_id: &str,
-    ) -> Option<mpsc::Sender<MessageAndCx<Local, Counterpart>>> {
+    ) -> Option<mpsc::Sender<MessageCx<Local, Counterpart>>> {
         self.data
             .lock()
             .expect("not poisoned")
@@ -275,7 +274,7 @@ where
 
             JrHandlerChain::new(McpClientRole, McpServerRole)
                 .on_receive_message(
-                    async move |message: MessageAndCx<McpClientRole, McpServerRole>| {
+                    async move |message: MessageCx<McpClientRole, McpServerRole>| {
                         // Wrap the message in McpOverAcp{Request,Notification} and forward to successor
                         let wrapped = message.map(
                             |request, request_cx| {
@@ -364,7 +363,7 @@ where
         };
 
         mcp_server_tx
-            .send(MessageAndCx::Request(request.message, request_cx))
+            .send(MessageCx::Request(request.message, request_cx))
             .await
             .map_err(crate::Error::into_internal_error)?;
 
@@ -388,7 +387,7 @@ where
         };
 
         mcp_server_tx
-            .send(MessageAndCx::Notification(
+            .send(MessageCx::Notification(
                 notification.message,
                 notification_cx.clone(),
             ))
@@ -461,8 +460,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<Local, Counterpart>,
-    ) -> Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error> {
+        message: MessageCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageCx<Local, Counterpart>>, crate::Error> {
         // Hmm, this is a bit wacky:
         //
         // * In a proxy, we expect to receive MCP over ACP notifications wrapped as a "FromSuccessorNotification"

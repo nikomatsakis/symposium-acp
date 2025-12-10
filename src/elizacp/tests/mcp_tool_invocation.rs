@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// Test helper to receive a JSON-RPC response
 async fn recv<T: sacp::JrResponsePayload + Send>(
-    response: sacp::JrResponse<sacp::UntypedRole, sacp::UntypedRole, T>,
+    response: sacp::JrResponse<T>,
 ) -> Result<T, sacp::Error> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     response.await_when_result_received(async move |result| {

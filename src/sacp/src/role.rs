@@ -17,11 +17,12 @@
 //! - [`SendsTo`] - Marker trait indicating a role can send a specific message type
 //!   to a specific counterpart.
 
-use std::{convert::Infallible, fmt::Debug, hash::Hash};
+use std::{fmt::Debug, hash::Hash};
 
 use crate::{
-    MessageAndCx, UntypedMessage,
-    schema::{ConductorRole, ProxyRole},
+    Handled, JrMessage, JrMessageHandler, MessageCx, UntypedMessage,
+    schema::{METHOD_SUCCESSOR_MESSAGE, SuccessorMessage},
+    util::json_cast,
 };
 
 /// Trait for JSON-RPC connection roles.
@@ -60,9 +61,7 @@ pub trait HasCounterpart<Counterpart: JrRole>:
     HasRemoteRole<Counterpart, Counterpart = Counterpart>
 {
     /// Method invoked when there is no defined message handler.
-    fn default_message_handler(
-        message: MessageAndCx<Self, Counterpart>,
-    ) -> Result<(), crate::Error> {
+    fn default_message_handler(message: MessageCx<Self, Counterpart>) -> Result<(), crate::Error> {
         let method = message.method().to_string();
         message.respond_with_error(crate::Error::method_not_found().with_data(method))
     }
@@ -81,47 +80,63 @@ pub trait HasRemoteRole<Remote: JrRole>: JrRole {
     /// can also be `Agent` or `Client`.
     type Counterpart: JrRole;
 
-    /// Transform a request before sending to the counterpart.
-    fn transform_outgoing_request_for(
-        remote: Remote,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error>;
+    /// The "style" of remote indicates whether the messages need to be transformed as they pass through.
+    fn remote_style(other: Remote) -> RemoteRoleStyle;
+}
 
-    /// Transform a notification before sending to the counterpart.
-    fn transform_outgoing_notification_for(
-        remote: Remote,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error>;
+#[non_exhaustive]
+pub enum RemoteRoleStyle {
+    /// Pass each message through exactly as it is.
+    Counterpart,
 
-    /// If true, all incoming messages to `Self` target `Remote`.
-    /// This is true for a "counterpart" relationship (e.g., agent<->client, conductor<->proxy)
-    /// but false for proxy<->client and proxy<->agent.
-    const PASSTHROUGH_INCOMING: bool;
+    /// Wrap messages in a [`SuccessorMessage`] envelope.
+    Successor,
+}
 
-    /// Extract value created after matching a message.
-    /// This is returned from [`Self::incoming_counterpart_to_remote`].
-    /// and then passed to [`Self::incoming_remote_to_counterpart`].
-    type Adjunct;
+impl RemoteRoleStyle {
+    pub(crate) fn transform_outgoing_message<M: JrMessage>(
+        &self,
+        msg: M,
+    ) -> Result<UntypedMessage, crate::Error> {
+        match self {
+            RemoteRoleStyle::Counterpart => msg.to_untyped_message(),
+            RemoteRoleStyle::Successor => SuccessorMessage {
+                message: msg,
+                meta: None,
+            }
+            .to_untyped_message(),
+        }
+    }
 
-    /// Try to match a message.
-    ///
-    /// Returns `None` if (a) the message does come from `Remote` or (b) PASSTHROUGH_INCOMING is true.
-    ///
-    /// Returns `Some(Ok(msg))` otherwise (or error if there's a parse error of some kind).
-    fn incoming_counterpart_to_remote(
-        _remote: Remote,
-        counterpart_message: &UntypedMessage,
-    ) -> Result<Option<(UntypedMessage, Self::Adjunct)>, crate::Error>;
+    pub(crate) async fn handle_incoming_message<L: JrRole, R: JrRole, C: JrRole>(
+        &self,
+        message_cx: MessageCx<L, C>,
+        handler: &mut impl JrMessageHandler<Local = L, Remote = R>,
+    ) -> Result<Handled<MessageCx<L, C>>, crate::Error>
+    where
+        L: HasRemoteRole<R, Counterpart = C> + HasCounterpart<C>,
+    {
+        match self {
+            RemoteRoleStyle::Counterpart => return handler.handle_message(message_cx).await,
+            RemoteRoleStyle::Successor => (),
+        }
 
-    /// Given a (potentially) transformed message from this remote,
-    /// recreate the original message from the counterpart with the new content.
-    /// Used when [`Self::extract_incoming_message_from`] has returned `Some` but the handler
-    /// returned [`Handled::No`].
-    fn incoming_remote_to_counterpart(
-        _remote: Remote,
-        remote_message: UntypedMessage,
-        adjunct: Self::Adjunct,
-    ) -> Result<UntypedMessage, crate::Error>;
+        let method = message_cx.method();
+        if method != METHOD_SUCCESSOR_MESSAGE {
+            return Ok(Handled::No(message_cx));
+        }
+
+        let SuccessorMessage { message, meta } = json_cast(message_cx.message())?;
+        let successor_message_cx = message_cx.try_map_message(|_| Ok(message))?;
+        match handler.handle_message(successor_message_cx).await? {
+            Handled::Yes => Ok(Handled::Yes),
+            Handled::No(successor_message_cx) => {
+                Ok(Handled::No(successor_message_cx.try_map_message(
+                    |message| SuccessorMessage { message, meta }.to_untyped_message(),
+                )?))
+            }
+        }
+    }
 }
 
 impl<Local: JrRole, Remote: JrRole> HasRemoteRole<Remote> for Local
@@ -130,37 +145,8 @@ where
 {
     type Counterpart = Remote;
 
-    fn transform_outgoing_request_for(
-        _remote: Remote,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    fn transform_outgoing_notification_for(
-        _remote: Remote,
-        message: UntypedMessage,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    const PASSTHROUGH_INCOMING: bool = true;
-
-    type Adjunct = Infallible;
-
-    fn incoming_counterpart_to_remote(
-        _remote: Remote,
-        _message: &UntypedMessage,
-    ) -> Result<Option<(UntypedMessage, Self::Adjunct)>, crate::Error> {
-        Err(crate::util::internal_error("passthrough"))
-    }
-
-    fn incoming_remote_to_counterpart(
-        _remote: Remote,
-        _original_message: UntypedMessage,
-        _adjunct: Self::Adjunct,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Err(crate::util::internal_error("passthrough"))
+    fn remote_style(_other: Remote) -> RemoteRoleStyle {
+        RemoteRoleStyle::Counterpart
     }
 }
 

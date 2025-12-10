@@ -199,7 +199,7 @@ pub mod jsonrpcmsg {
 pub use jsonrpc::{
     ByteStreams, Channel, Handled, IntoHandled, JrConnection, JrConnectionCx, JrHandlerChain,
     JrMessage, JrMessageHandler, JrMessageHandlerSend, JrNotification, JrRequest, JrRequestCx,
-    JrResponse, JrResponsePayload, Lines, MessageAndCx, UntypedMessage,
+    JrResponse, JrResponsePayload, Lines, MessageCx, UntypedMessage,
 };
 
 pub use role::{HasCounterpart, HasRemoteRole, JrRole, SendsTo, UntypedRole};
