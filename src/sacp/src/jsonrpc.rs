@@ -704,8 +704,12 @@ where
     ) -> JrHandlerChain<ChainedHandler<H, AdaptRole<MessageHandler<H::Local, Remote, Req, Notif, F>>>>
     where
         H::Local: HasRemoteRole<Remote, Counterpart = H::Remote>,
-        F: AsyncFnMut(MessageCx<H::Local, H::Remote, Req, Notif>) -> Result<T, crate::Error> + Send,
-        T: IntoHandled<MessageCx<H::Local, H::Remote, Req, Notif>>,
+        F: AsyncFnMut(
+                MessageCx<Req, Notif>,
+                JrConnectionCx<H::Local, H::Remote>,
+            ) -> Result<T, crate::Error>
+            + Send,
+        T: IntoHandled<MessageCx<Req, Notif>>,
     {
         self.with_handler(AdaptRole::new(MessageHandler::new(
             <H::Local>::default(),
@@ -909,9 +913,10 @@ where
     /// ```
     pub async fn apply(
         &mut self,
-        message: MessageCx<H::Local, H::Remote>,
-    ) -> Result<Handled<MessageCx<H::Local, H::Remote>>, crate::Error> {
-        self.handler.handle_message(message).await
+        message: MessageCx,
+        cx: JrConnectionCx<H::Local, H::Remote>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
+        self.handler.handle_message(message, cx).await
     }
 
     /// Convenience method to connect to a transport and serve.
@@ -1714,7 +1719,6 @@ pub struct JrRequestCx<T: JrResponsePayload = serde_json::Value> {
 impl<T: JrResponsePayload> std::fmt::Debug for JrRequestCx<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("JrRequestCx")
-            .field("cx", &self.cx)
             .field("method", &self.method)
             .field("id", &self.id)
             .field("response_type", &std::any::type_name::<T>())

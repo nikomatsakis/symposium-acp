@@ -20,7 +20,7 @@
 use std::{fmt::Debug, hash::Hash};
 
 use crate::{
-    Handled, JrMessage, JrMessageHandler, MessageCx, UntypedMessage,
+    Handled, JrConnectionCx, JrMessage, JrMessageHandler, MessageCx, UntypedMessage,
     schema::{METHOD_SUCCESSOR_MESSAGE, SuccessorMessage},
     util::json_cast,
 };
@@ -61,9 +61,12 @@ pub trait HasCounterpart<Counterpart: JrRole>:
     HasRemoteRole<Counterpart, Counterpart = Counterpart>
 {
     /// Method invoked when there is no defined message handler.
-    fn default_message_handler(message: MessageCx<Self, Counterpart>) -> Result<(), crate::Error> {
+    fn default_message_handler(
+        message: MessageCx,
+        cx: JrConnectionCx<Self, Counterpart>,
+    ) -> Result<(), crate::Error> {
         let method = message.method().to_string();
-        message.respond_with_error(crate::Error::method_not_found().with_data(method))
+        message.respond_with_error(crate::Error::method_not_found().with_data(method), cx)
     }
 }
 
@@ -110,14 +113,17 @@ impl RemoteRoleStyle {
 
     pub(crate) async fn handle_incoming_message<L: JrRole, R: JrRole, C: JrRole>(
         &self,
-        message_cx: MessageCx<L, C>,
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<L, C>,
         handler: &mut impl JrMessageHandler<Local = L, Remote = R>,
-    ) -> Result<Handled<MessageCx<L, C>>, crate::Error>
+    ) -> Result<Handled<MessageCx>, crate::Error>
     where
         L: HasRemoteRole<R, Counterpart = C> + HasCounterpart<C>,
     {
         match self {
-            RemoteRoleStyle::Counterpart => return handler.handle_message(message_cx).await,
+            RemoteRoleStyle::Counterpart => {
+                return handler.handle_message(message_cx, connection_cx).await;
+            }
             RemoteRoleStyle::Successor => (),
         }
 
@@ -128,7 +134,10 @@ impl RemoteRoleStyle {
 
         let SuccessorMessage { message, meta } = json_cast(message_cx.message())?;
         let successor_message_cx = message_cx.try_map_message(|_| Ok(message))?;
-        match handler.handle_message(successor_message_cx).await? {
+        match handler
+            .handle_message(successor_message_cx, connection_cx)
+            .await?
+        {
             Handled::Yes => Ok(Handled::Yes),
             Handled::No(successor_message_cx) => {
                 Ok(Handled::No(successor_message_cx.try_map_message(

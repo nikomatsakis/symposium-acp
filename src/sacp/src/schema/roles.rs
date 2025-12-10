@@ -7,7 +7,7 @@
 //! - [`AcpConductor`] - The conductor that orchestrates proxies and agents
 
 use crate::{
-    JrNotification, JrRequest, MessageCx, UntypedMessage,
+    JrConnectionCx, JrNotification, JrRequest, MessageCx, UntypedMessage,
     role::{HasCounterpart, HasRemoteRole, JrRole, RemoteRoleStyle, SendsTo},
     schema::{
         // Client → Agent requests
@@ -181,12 +181,12 @@ impl HasCounterpart<ClientRole> for ConductorRole {}
 // (proxy must explicitly specify Client or Agent as logical target)
 impl HasCounterpart<ConductorRole> for ProxyRole {
     fn default_message_handler(
-        message: MessageCx<Self, ConductorRole>,
+        message: MessageCx,
+        cx: JrConnectionCx<Self, ConductorRole>,
     ) -> Result<(), crate::Error> {
         // Default behavior: proxy messages.
         match message {
             MessageCx::Request(request, request_cx) => {
-                let cx = request_cx.connection_cx();
                 match <SuccessorMessage>::parse_request(request.method(), request.params()) {
                     // If we are receiving a request from our successor (the agent),
                     // then our default is to proxy it to the client.
@@ -206,7 +206,7 @@ impl HasCounterpart<ConductorRole> for ProxyRole {
                 }
             }
 
-            MessageCx::Notification(notification, cx) => {
+            MessageCx::Notification(notification) => {
                 match <SuccessorMessage>::parse_notification(
                     notification.method(),
                     notification.params(),

@@ -301,9 +301,7 @@ where
             .spawn(async move { client_component.serve(client_channel).await })
             .and_then(|()| {
                 // Spawn the MCP server serving the server channel
-                request_cx
-                    .connection_cx()
-                    .spawn(async move { mcp_server.serve(server_channel).await })
+                outer_cx.spawn(async move { mcp_server.serve(server_channel).await })
             });
 
         match spawn_results {
@@ -355,7 +353,7 @@ where
     ) -> Result<Handled<McpOverAcpMessage<UntypedMessage>>, crate::Error> {
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
         let Some(mut mcp_server_tx) = self.get_connection(&notification.connection_id) else {
-            return Ok(Handled::No((notification)));
+            return Ok(Handled::No(notification));
         };
 
         mcp_server_tx
@@ -377,7 +375,7 @@ where
         if self.remove_connection(&successor_notification.connection_id) {
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No((successor_notification)))
+            Ok(Handled::No(successor_notification))
         }
     }
 

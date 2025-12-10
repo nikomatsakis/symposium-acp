@@ -547,10 +547,10 @@ impl<H: JrMessageHandler> JrMessageHandler for AdaptRole<H> {
     async fn handle_message(
         &mut self,
         message: MessageCx,
-        connection_cx: JrConnectionCx<H1::Local, H1::Counterpart>,
+        connection_cx: JrConnectionCx<H::Local, H::Counterpart>,
     ) -> Result<Handled<MessageCx>, crate::Error> {
         <H::Local>::remote_style(H::Remote::default())
-            .handle_incoming_message(message, &mut self.handler)
+            .handle_incoming_message(message, connection_cx, &mut self.handler)
             .await
     }
 }

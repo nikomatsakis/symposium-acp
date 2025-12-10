@@ -115,13 +115,20 @@ where
     let mut message_cx = match &request.id {
         Some(id) => MessageCx::Request(
             message,
-            JrRequestCx::new(json_rpc_cx, request.method.clone(), id.clone()),
+            JrRequestCx::new(
+                json_rpc_cx.message_tx.clone(),
+                request.method.clone(),
+                id.clone(),
+            ),
         ),
-        None => MessageCx::Notification(message, json_rpc_cx.clone()),
+        None => MessageCx::Notification(message),
     };
 
     for dynamic_handler in dynamic_handlers.values_mut() {
-        match dynamic_handler.dyn_handle_message(message_cx).await? {
+        match dynamic_handler
+            .dyn_handle_message(message_cx, json_rpc_cx.clone())
+            .await?
+        {
             Handled::Yes => {
                 tracing::debug!(method = request.method, ?request.id, handler = ?dynamic_handler.dyn_describe_chain(), "Message handled");
                 return Ok(());
@@ -134,7 +141,10 @@ where
         }
     }
 
-    match handler.handle_message(message_cx).await? {
+    match handler
+        .handle_message(message_cx, json_rpc_cx.clone())
+        .await?
+    {
         Handled::Yes => {
             tracing::debug!(method = request.method, ?request.id, handler = ?handler.describe_chain(), "Message handled");
             return Ok(());
@@ -142,7 +152,7 @@ where
 
         Handled::No(m) => {
             tracing::debug!(method = ?request.method, ?request.id, "No suitable handler found");
-            <Local as HasCounterpart<Remote>>::default_message_handler(m)
+            <Local as HasCounterpart<Remote>>::default_message_handler(m, json_rpc_cx.clone())
         }
     }
 }
