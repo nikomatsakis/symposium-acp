@@ -8,8 +8,8 @@
 use jsonrpcmsg::Params;
 
 use crate::{
-    Handled, JrConnectionCx, JrNotification, JrRequest, JrRequestCx, MessageAndCx, UntypedMessage,
-    role::JrRole, util::json_cast,
+    Handled, HasCounterpart, JrConnectionCx, JrNotification, JrRequest, JrRequestCx, MessageAndCx,
+    UntypedMessage, role::JrRole, util::json_cast,
 };
 
 /// Helper for pattern-matching on untyped JSON-RPC requests.
@@ -64,13 +64,19 @@ use crate::{
 /// that handler runs and subsequent handlers are skipped. If parsing fails for all types,
 /// the `otherwise` handler receives the original untyped message.
 #[must_use]
-pub struct MatchMessage<Local: JrRole, Remote: JrRole> {
-    state: Result<Handled<MessageAndCx<Local, Remote>>, crate::Error>,
+pub struct MatchMessage<Local: JrRole, Counterpart: JrRole>
+where
+    Local: HasCounterpart<Counterpart>,
+{
+    state: Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error>,
 }
 
-impl<Local: JrRole, Remote: JrRole> MatchMessage<Local, Remote> {
+impl<Local: JrRole, Counterpart: JrRole> MatchMessage<Local, Counterpart>
+where
+    Local: HasCounterpart<Counterpart>,
+{
     /// Create a new pattern matcher for the given untyped request message.
-    pub fn new(message: MessageAndCx<Local, Remote>) -> Self {
+    pub fn new(message: MessageAndCx<Local, Counterpart>) -> Self {
         Self {
             state: Ok(Handled::No(message)),
         }
@@ -88,10 +94,13 @@ impl<Local: JrRole, Remote: JrRole> MatchMessage<Local, Remote> {
     /// Returns `self` to allow chaining multiple `handle_if` calls.
     pub async fn if_request<Req: JrRequest, H>(
         mut self,
-        op: impl AsyncFnOnce(Req, JrRequestCx<Local, Remote, Req::Response>) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(
+            Req,
+            JrRequestCx<Local, Counterpart, Req::Response>,
+        ) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(Req, JrRequestCx<Local, Remote, Req::Response>)>,
+        H: crate::IntoHandled<(Req, JrRequestCx<Local, Counterpart, Req::Response>)>,
     {
         if let Ok(Handled::No(MessageAndCx::Request(untyped_request, untyped_request_cx))) =
             self.state
@@ -142,10 +151,10 @@ impl<Local: JrRole, Remote: JrRole> MatchMessage<Local, Remote> {
     /// Returns `self` to allow chaining multiple `handle_if` calls.
     pub async fn if_notification<N: JrNotification, H>(
         mut self,
-        op: impl AsyncFnOnce(N, JrConnectionCx<Local, Remote>) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(N, JrConnectionCx<Local, Counterpart>) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(N, JrConnectionCx<Local, Remote>)>,
+        H: crate::IntoHandled<(N, JrConnectionCx<Local, Counterpart>)>,
     {
         if let Ok(Handled::No(MessageAndCx::Notification(untyped_notification, notification_cx))) =
             self.state
@@ -186,7 +195,7 @@ impl<Local: JrRole, Remote: JrRole> MatchMessage<Local, Remote> {
     }
 
     /// Complete matching, returning `Handled::No` if no match was found.
-    pub fn done(self) -> Result<Handled<MessageAndCx<Local, Remote>>, crate::Error> {
+    pub fn done(self) -> Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(Handled::Yes),
             Ok(Handled::No(message)) => Ok(Handled::No(message)),
@@ -201,7 +210,7 @@ impl<Local: JrRole, Remote: JrRole> MatchMessage<Local, Remote> {
     /// matching chain and get the final result.
     pub async fn otherwise(
         self,
-        op: impl AsyncFnOnce(MessageAndCx<Local, Remote>) -> Result<(), crate::Error>,
+        op: impl AsyncFnOnce(MessageAndCx<Local, Counterpart>) -> Result<(), crate::Error>,
     ) -> Result<(), crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(()),
@@ -258,7 +267,10 @@ enum TypeNotificationState {
     Handled(Result<(), crate::Error>),
 }
 
-impl<Local: JrRole, Remote: JrRole> TypeNotification<Local, Remote> {
+impl<Local: JrRole, Remote: JrRole> TypeNotification<Local, Remote>
+where
+    Local: HasCounterpart<Remote>,
+{
     /// Create a new pattern matcher for the given untyped notification message.
     pub fn new(request: UntypedMessage, cx: &JrConnectionCx<Local, Remote>) -> Self {
         let UntypedMessage { method, params } = request;

@@ -9,44 +9,49 @@ use serde::{Deserialize, Serialize};
 // Successor forwarding protocol
 // =============================================================================
 
-const SUCCESSOR_REQUEST_METHOD: &str = "_proxy/successor/request";
+/// JSON-RPC method name for successor forwarding.
+pub const METHOD_SUCCESSOR_MESSAGE: &str = "_proxy/successor";
 
-/// A request being sent to the successor component.
+/// A message being sent to the successor component.
 ///
-/// Used in `_proxy/successor/request` when the proxy wants to forward a request downstream.
+/// Used in `_proxy/successor` when the proxy wants to forward a message downstream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SuccessorRequest<Req: JrRequest> {
+pub struct SuccessorMessage<M: JrMessage = UntypedMessage> {
     /// The message to be sent to the successor component.
     #[serde(flatten)]
-    pub request: Req,
+    pub message: M,
 
     /// Optional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
 }
 
-impl<Req: JrRequest> JrMessage for SuccessorRequest<Req> {
+impl<M: JrMessage> JrMessage for SuccessorMessage<M> {
     fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
         UntypedMessage::new(
-            SUCCESSOR_REQUEST_METHOD,
-            SuccessorRequest {
-                request: self.request.to_untyped_message()?,
+            METHOD_SUCCESSOR_MESSAGE,
+            SuccessorMessage {
+                message: self.message.to_untyped_message()?,
                 meta: self.meta.clone(),
             },
         )
     }
 
     fn method(&self) -> &str {
-        SUCCESSOR_REQUEST_METHOD
+        METHOD_SUCCESSOR_MESSAGE
     }
+}
+
+impl<Req: JrRequest> JrRequest for SuccessorMessage<Req> {
+    type Response = Req::Response;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
-        if method == SUCCESSOR_REQUEST_METHOD {
-            match crate::util::json_cast::<_, SuccessorRequest<UntypedMessage>>(params) {
-                Ok(outer) => match Req::parse_request(&outer.request.method, &outer.request.params)
+        if method == METHOD_SUCCESSOR_MESSAGE {
+            match crate::util::json_cast::<_, SuccessorMessage<UntypedMessage>>(params) {
+                Ok(outer) => match Req::parse_request(&outer.message.method, &outer.message.params)
                 {
-                    Some(Ok(request)) => Some(Ok(SuccessorRequest {
-                        request,
+                    Some(Ok(request)) => Some(Ok(SuccessorMessage {
+                        message: request,
                         meta: outer.meta,
                     })),
                     Some(Err(err)) => Some(Err(err)),
@@ -58,74 +63,25 @@ impl<Req: JrRequest> JrMessage for SuccessorRequest<Req> {
             None
         }
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        None // Request, not notification
-    }
 }
 
-impl<Req: JrRequest> JrRequest for SuccessorRequest<Req> {
-    type Response = Req::Response;
-}
-
-const SUCCESSOR_NOTIFICATION_METHOD: &str = "_proxy/successor/notification";
-
-/// A notification being sent to the successor component.
-///
-/// Used in `_proxy/successor/notification` when the proxy wants to forward a notification downstream.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SuccessorNotification<Req: JrNotification> {
-    /// The message to be sent to the successor component.
-    #[serde(flatten)]
-    pub notification: Req,
-
-    /// Optional metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub meta: Option<serde_json::Value>,
-}
-
-impl<Req: JrNotification> JrMessage for SuccessorNotification<Req> {
-    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
-        UntypedMessage::new(
-            SUCCESSOR_NOTIFICATION_METHOD,
-            SuccessorNotification {
-                notification: self.notification.to_untyped_message()?,
-                meta: self.meta.clone(),
-            },
-        )
-    }
-
-    fn method(&self) -> &str {
-        SUCCESSOR_NOTIFICATION_METHOD
-    }
-
-    fn parse_request(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        None // Notification, not request
-    }
-
+impl<Notif: JrNotification> JrNotification for SuccessorMessage<Notif> {
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
     ) -> Option<Result<Self, crate::Error>> {
-        if method == SUCCESSOR_NOTIFICATION_METHOD {
-            match crate::util::json_cast::<_, SuccessorNotification<UntypedMessage>>(params) {
-                Ok(outer) => match Req::parse_notification(
-                    &outer.notification.method,
-                    &outer.notification.params,
-                ) {
-                    Some(Ok(notification)) => Some(Ok(SuccessorNotification {
-                        notification,
-                        meta: outer.meta,
-                    })),
-                    Some(Err(err)) => Some(Err(err)),
-                    None => None,
-                },
+        if method == METHOD_SUCCESSOR_MESSAGE {
+            match crate::util::json_cast::<_, SuccessorMessage<UntypedMessage>>(params) {
+                Ok(outer) => {
+                    match Notif::parse_notification(&outer.message.method, &outer.message.params) {
+                        Some(Ok(notification)) => Some(Ok(SuccessorMessage {
+                            message: notification,
+                            meta: outer.meta,
+                        })),
+                        Some(Err(err)) => Some(Err(err)),
+                        None => None,
+                    }
+                }
                 Err(err) => Some(Err(err)),
             }
         } else {
@@ -133,8 +89,6 @@ impl<Req: JrNotification> JrMessage for SuccessorNotification<Req> {
         }
     }
 }
-
-impl<Req: JrNotification> JrNotification for SuccessorNotification<Req> {}
 
 // =============================================================================
 // MCP-over-ACP protocol
@@ -162,6 +116,10 @@ impl JrMessage for McpConnectRequest {
     fn method(&self) -> &str {
         METHOD_MCP_CONNECT_REQUEST
     }
+}
+
+impl JrRequest for McpConnectRequest {
+    type Response = McpConnectResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != METHOD_MCP_CONNECT_REQUEST {
@@ -169,18 +127,6 @@ impl JrMessage for McpConnectRequest {
         }
         Some(crate::util::json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for McpConnectRequest {
-    type Response = McpConnectResponse;
 }
 
 /// Response to an MCP connect request
@@ -226,15 +172,9 @@ impl JrMessage for McpDisconnectNotification {
     fn method(&self) -> &str {
         METHOD_MCP_DISCONNECT_NOTIFICATION
     }
+}
 
-    fn parse_request(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a notification, not a request
-        None
-    }
-
+impl JrNotification for McpDisconnectNotification {
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
@@ -246,10 +186,8 @@ impl JrMessage for McpDisconnectNotification {
     }
 }
 
-impl JrNotification for McpDisconnectNotification {}
-
 /// JSON-RPC method name for MCP requests over ACP
-pub const METHOD_MCP_REQUEST: &str = "_mcp/request";
+pub const METHOD_MCP_MESSAGE: &str = "_mcp/message";
 
 /// An MCP request sent via ACP. This could be an MCP-server-to-MCP-client request
 /// (in which case it goes from the ACP client to the ACP agent,
@@ -257,43 +195,47 @@ pub const METHOD_MCP_REQUEST: &str = "_mcp/request";
 /// (in which case it goes from the ACP agent to the ACP client).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpOverAcpRequest<R> {
+pub struct McpOverAcpMessage<M = UntypedMessage> {
     /// id given in response to `_mcp/connect` request.
     pub connection_id: String,
 
     /// Request to be sent to the MCP server or client.
     #[serde(flatten)]
-    pub request: R,
+    pub message: M,
 
     /// Optional metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<serde_json::Value>,
 }
 
-impl<R: JrRequest> JrMessage for McpOverAcpRequest<R> {
+impl<M: JrMessage> JrMessage for McpOverAcpMessage<M> {
     fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
-        let message = self.request.to_untyped_message()?;
+        let message = self.message.to_untyped_message()?;
         UntypedMessage::new(
-            METHOD_MCP_REQUEST,
-            McpOverAcpRequest {
+            METHOD_MCP_MESSAGE,
+            McpOverAcpMessage {
                 connection_id: self.connection_id.clone(),
-                request: message,
+                message,
                 meta: self.meta.clone(),
             },
         )
     }
 
     fn method(&self) -> &str {
-        METHOD_MCP_REQUEST
+        METHOD_MCP_MESSAGE
     }
+}
+
+impl<R: JrRequest> JrRequest for McpOverAcpMessage<R> {
+    type Response = R::Response;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
-        if method == METHOD_MCP_REQUEST {
-            match crate::util::json_cast::<_, McpOverAcpRequest<UntypedMessage>>(params) {
-                Ok(outer) => match R::parse_request(&outer.request.method, &outer.request.params) {
-                    Some(Ok(request)) => Some(Ok(McpOverAcpRequest {
+        if method == METHOD_MCP_MESSAGE {
+            match crate::util::json_cast::<_, McpOverAcpMessage<UntypedMessage>>(params) {
+                Ok(outer) => match R::parse_request(&outer.message.method, &outer.message.params) {
+                    Some(Ok(request)) => Some(Ok(McpOverAcpMessage {
                         connection_id: outer.connection_id,
-                        request,
+                        message: request,
                         meta: outer.meta,
                     })),
                     Some(Err(err)) => Some(Err(err)),
@@ -305,84 +247,26 @@ impl<R: JrRequest> JrMessage for McpOverAcpRequest<R> {
             None
         }
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        None // Request, not notification
-    }
 }
 
-impl<R: JrRequest> JrRequest for McpOverAcpRequest<R> {
-    type Response = R::Response;
-}
-
-/// JSON-RPC method name for MCP notifications over ACP
-pub const METHOD_MCP_NOTIFICATION: &str = "_mcp/notification";
-
-/// An MCP notification sent via ACP, either from the MCP client (the ACP agent)
-/// or the MCP server (the ACP client).
-///
-/// Delivered via `_mcp/notification` when the MCP client (the ACP agent)
-/// sends a notification to the MCP server (the ACP client).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpOverAcpNotification<R> {
-    /// id given in response to `_mcp/connect` request.
-    pub connection_id: String,
-
-    /// Notification to be sent to the MCP server or client.
-    #[serde(flatten)]
-    pub notification: R,
-
-    /// Optional metadata
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub meta: Option<serde_json::Value>,
-}
-
-impl<R: JrMessage> JrMessage for McpOverAcpNotification<R> {
-    fn to_untyped_message(&self) -> Result<UntypedMessage, crate::Error> {
-        let params = self.notification.to_untyped_message()?;
-        UntypedMessage::new(
-            METHOD_MCP_NOTIFICATION,
-            McpOverAcpNotification {
-                connection_id: self.connection_id.clone(),
-                notification: params,
-                meta: self.meta.clone(),
-            },
-        )
-    }
-
-    fn method(&self) -> &str {
-        METHOD_MCP_NOTIFICATION
-    }
-
-    fn parse_request(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        None // Notification, not request
-    }
-
+impl<R: JrNotification> JrNotification for McpOverAcpMessage<R> {
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
     ) -> Option<Result<Self, crate::Error>> {
-        if method == METHOD_MCP_NOTIFICATION {
-            match crate::util::json_cast::<_, McpOverAcpNotification<UntypedMessage>>(params) {
-                Ok(outer) => match R::parse_notification(
-                    &outer.notification.method,
-                    &outer.notification.params,
-                ) {
-                    Some(Ok(notification)) => Some(Ok(McpOverAcpNotification {
-                        connection_id: outer.connection_id,
-                        notification,
-                        meta: outer.meta,
-                    })),
-                    Some(Err(err)) => Some(Err(err)),
-                    None => None,
-                },
+        if method == METHOD_MCP_MESSAGE {
+            match crate::util::json_cast::<_, McpOverAcpMessage<UntypedMessage>>(params) {
+                Ok(outer) => {
+                    match R::parse_notification(&outer.message.method, &outer.message.params) {
+                        Some(Ok(notification)) => Some(Ok(McpOverAcpMessage {
+                            connection_id: outer.connection_id,
+                            message: notification,
+                            meta: outer.meta,
+                        })),
+                        Some(Err(err)) => Some(Err(err)),
+                        None => None,
+                    }
+                }
                 Err(err) => Some(Err(err)),
             }
         } else {
@@ -390,5 +274,3 @@ impl<R: JrMessage> JrMessage for McpOverAcpNotification<R> {
         }
     }
 }
-
-impl<R: JrMessage> JrNotification for McpOverAcpNotification<R> {}

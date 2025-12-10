@@ -5,7 +5,9 @@
 
 use sacp::mcp_server::McpServiceRegistry;
 use sacp::proxy::AcpProxyExt;
-use sacp::schema::{ContentBlock, ContentChunk, SessionNotification, SessionUpdate};
+use sacp::schema::{
+    ConductorRole, ContentBlock, ContentChunk, ProxyRole, SessionNotification, SessionUpdate,
+};
 use sacp::{Component, JrHandlerChain, UntypedRole};
 
 /// Run the arrow proxy that adds `>` to each session update.
@@ -14,7 +16,7 @@ use sacp::{Component, JrHandlerChain, UntypedRole};
 ///
 /// * `transport` - Component to the predecessor (conductor or another proxy)
 pub async fn run_arrow_proxy(transport: impl Component + 'static) -> Result<(), sacp::Error> {
-    JrHandlerChain::new(UntypedRole, UntypedRole)
+    JrHandlerChain::new(ProxyRole, ConductorRole)
         .name("arrow-proxy")
         // Intercept session notifications from successor (agent) and modify them
         .on_receive_notification_from_successor(

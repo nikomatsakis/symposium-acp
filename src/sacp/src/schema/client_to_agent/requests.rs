@@ -21,6 +21,10 @@ impl JrMessage for InitializeRequest {
     fn method(&self) -> &str {
         "initialize"
     }
+}
+
+impl JrRequest for InitializeRequest {
+    type Response = InitializeResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "initialize" {
@@ -29,18 +33,6 @@ impl JrMessage for InitializeRequest {
 
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for InitializeRequest {
-    type Response = InitializeResponse;
 }
 
 impl JrResponsePayload for InitializeResponse {
@@ -66,6 +58,10 @@ impl JrMessage for AuthenticateRequest {
     fn method(&self) -> &str {
         "authenticate"
     }
+}
+
+impl JrRequest for AuthenticateRequest {
+    type Response = AuthenticateResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "authenticate" {
@@ -73,18 +69,6 @@ impl JrMessage for AuthenticateRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for AuthenticateRequest {
-    type Response = AuthenticateResponse;
 }
 
 impl JrResponsePayload for AuthenticateResponse {
@@ -110,6 +94,10 @@ impl JrMessage for LoadSessionRequest {
     fn method(&self) -> &str {
         "session/load"
     }
+}
+
+impl JrRequest for LoadSessionRequest {
+    type Response = LoadSessionResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "session/load" {
@@ -117,18 +105,6 @@ impl JrMessage for LoadSessionRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for LoadSessionRequest {
-    type Response = LoadSessionResponse;
 }
 
 impl JrResponsePayload for LoadSessionResponse {
@@ -154,6 +130,10 @@ impl JrMessage for NewSessionRequest {
     fn method(&self) -> &str {
         "session/new"
     }
+}
+
+impl JrRequest for NewSessionRequest {
+    type Response = NewSessionResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "session/new" {
@@ -161,18 +141,6 @@ impl JrMessage for NewSessionRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for NewSessionRequest {
-    type Response = NewSessionResponse;
 }
 
 impl JrResponsePayload for NewSessionResponse {
@@ -198,6 +166,10 @@ impl JrMessage for PromptRequest {
     fn method(&self) -> &str {
         "session/prompt"
     }
+}
+
+impl JrRequest for PromptRequest {
+    type Response = PromptResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "session/prompt" {
@@ -205,18 +177,6 @@ impl JrMessage for PromptRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for PromptRequest {
-    type Response = PromptResponse;
 }
 
 impl JrResponsePayload for PromptResponse {
@@ -242,6 +202,10 @@ impl JrMessage for SetSessionModeRequest {
     fn method(&self) -> &str {
         "session/set_mode"
     }
+}
+
+impl JrRequest for SetSessionModeRequest {
+    type Response = SetSessionModeResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "session/set_mode" {
@@ -249,18 +213,6 @@ impl JrMessage for SetSessionModeRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for SetSessionModeRequest {
-    type Response = SetSessionModeResponse;
 }
 
 impl JrResponsePayload for SetSessionModeResponse {

@@ -6,35 +6,32 @@
 //! - [`AcpProxy`] - A proxy that sits between client and agent, potentially transforming messages
 //! - [`AcpConductor`] - The conductor that orchestrates proxies and agents
 
+use std::convert::Infallible;
+
 use crate::{
-    Handled, JrMessage, JrMessageHandler, MessageAndCx, UntypedMessage,
-    role::{Counterpart, DefaultCounterpart, JrRole, ReceivesFromRole, SendsTo, SendsToRole},
+    JrMessage, JrNotification, JrRequest, MessageAndCx, UntypedMessage,
+    role::{HasCounterpart, HasRemoteRole, JrRole, SendsTo},
     schema::{
         // Client → Agent requests
         AuthenticateRequest,
-        // Client → Agent notifications
         CancelNotification,
-        // Agent → Client requests
         CreateTerminalRequest,
         InitializeRequest,
         KillTerminalCommandRequest,
         LoadSessionRequest,
+        METHOD_SUCCESSOR_MESSAGE,
         NewSessionRequest,
         PromptRequest,
         ReadTextFileRequest,
         ReleaseTerminalRequest,
         RequestPermissionRequest,
-        // Agent → Client notifications
         SessionNotification,
         SetSessionModeRequest,
-        // Proxy protocol
-        SuccessorNotification,
-        SuccessorRequest,
+        SuccessorMessage,
         TerminalOutputRequest,
         WaitForTerminalExitRequest,
         WriteTextFileRequest,
     },
-    util::MatchMessage,
 };
 
 /// The ACP client role (e.g., an IDE or editor).
@@ -43,28 +40,10 @@ use crate::{
 /// `initialize`, `prompt`, and `tools/call`.
 ///
 /// The default counterpart for a client is [`AcpAgent`].
-#[derive(Debug, Default, Clone)]
-pub struct AcpClient;
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClientRole;
 
-impl JrRole for AcpClient {}
-
-impl SendsToRole<AcpAgent> for AcpClient {
-    fn transform_request(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpAgent,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    fn transform_notification(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpAgent,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-}
+impl JrRole for ClientRole {}
 
 /// The ACP agent role.
 ///
@@ -72,28 +51,10 @@ impl SendsToRole<AcpAgent> for AcpClient {
 /// (e.g., `sampling/createMessage` for LLM calls).
 ///
 /// The default counterpart for an agent is [`AcpClient`].
-#[derive(Debug, Default, Clone)]
-pub struct AcpAgent;
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AgentRole;
 
-impl JrRole for AcpAgent {}
-
-impl SendsToRole<AcpClient> for AcpAgent {
-    fn transform_request(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpClient,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    fn transform_notification(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpClient,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-}
+impl JrRole for AgentRole {}
 
 /// The ACP proxy role.
 ///
@@ -106,50 +67,99 @@ impl SendsToRole<AcpClient> for AcpAgent {
 ///
 /// Note: `AcpProxy` does NOT implement [`DefaultCounterpart`] because
 /// it has multiple logical targets and must explicitly specify the destination.
-#[derive(Debug, Default, Clone)]
-pub struct AcpProxy;
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProxyRole;
 
-impl JrRole for AcpProxy {}
+impl JrRole for ProxyRole {}
 
-impl SendsToRole<AcpClient> for AcpProxy {
-    fn transform_request(
-        &self,
+impl HasRemoteRole<ClientRole> for ProxyRole {
+    type Counterpart = ConductorRole;
+
+    fn transform_outgoing_request_for(
+        _role: ClientRole,
         message: UntypedMessage,
-        _target: &AcpClient,
     ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
     }
 
-    fn transform_notification(
-        &self,
+    fn transform_outgoing_notification_for(
+        _role: ClientRole,
         message: UntypedMessage,
-        _target: &AcpClient,
     ) -> Result<UntypedMessage, crate::Error> {
         Ok(message)
+    }
+
+    const PASSTHROUGH_INCOMING: bool = true;
+
+    type Adjunct = Infallible;
+
+    fn incoming_counterpart_to_remote(
+        _remote: ClientRole,
+        _message: &UntypedMessage,
+    ) -> Result<Option<(UntypedMessage, Infallible)>, crate::Error> {
+        Err(crate::util::internal_error("cannot extract"))
+    }
+
+    fn incoming_remote_to_counterpart(
+        _remote: ClientRole,
+        _original_message: UntypedMessage,
+        adjunct: Infallible,
+    ) -> Result<UntypedMessage, crate::Error> {
+        match adjunct {}
     }
 }
 
-impl SendsToRole<AcpAgent> for AcpProxy {
-    fn transform_request(
-        &self,
+impl HasRemoteRole<AgentRole> for ProxyRole {
+    type Counterpart = ConductorRole;
+
+    fn transform_outgoing_request_for(
+        _role: AgentRole,
         message: UntypedMessage,
-        _target: &AcpAgent,
     ) -> Result<UntypedMessage, crate::Error> {
-        SuccessorRequest {
-            request: message,
+        SuccessorMessage {
+            message,
             meta: None,
         }
         .to_untyped_message()
     }
 
-    fn transform_notification(
-        &self,
+    fn transform_outgoing_notification_for(
+        _role: AgentRole,
         message: UntypedMessage,
-        _target: &AcpAgent,
     ) -> Result<UntypedMessage, crate::Error> {
-        SuccessorNotification {
-            notification: message,
+        SuccessorMessage {
+            message,
             meta: None,
+        }
+        .to_untyped_message()
+    }
+
+    const PASSTHROUGH_INCOMING: bool = false;
+
+    type Adjunct = Option<serde_json::Value>;
+
+    fn incoming_counterpart_to_remote(
+        _remote: AgentRole,
+        message: &UntypedMessage,
+    ) -> Result<Option<(UntypedMessage, Option<serde_json::Value>)>, crate::Error> {
+        if message.method == METHOD_SUCCESSOR_MESSAGE {
+            match crate::util::json_cast::<_, SuccessorMessage>(&message.params) {
+                Ok(SuccessorMessage { message, meta }) => Ok(Some((message, meta))),
+                Err(err) => Err(err),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn incoming_remote_to_counterpart(
+        _remote: AgentRole,
+        transformed_message: UntypedMessage,
+        adjunct: Option<serde_json::Value>,
+    ) -> Result<UntypedMessage, crate::Error> {
+        SuccessorMessage {
+            message: transformed_message,
+            meta: adjunct,
         }
         .to_untyped_message()
     }
@@ -160,125 +170,44 @@ impl SendsToRole<AcpAgent> for AcpProxy {
 // ============================================================================
 
 // Client → Agent requests
-impl SendsTo<AcpAgent, InitializeRequest> for AcpClient {}
-impl SendsTo<AcpAgent, AuthenticateRequest> for AcpClient {}
-impl SendsTo<AcpAgent, NewSessionRequest> for AcpClient {}
-impl SendsTo<AcpAgent, LoadSessionRequest> for AcpClient {}
-impl SendsTo<AcpAgent, PromptRequest> for AcpClient {}
-impl SendsTo<AcpAgent, SetSessionModeRequest> for AcpClient {}
+impl SendsTo<AgentRole, InitializeRequest> for ClientRole {}
+impl SendsTo<AgentRole, AuthenticateRequest> for ClientRole {}
+impl SendsTo<AgentRole, NewSessionRequest> for ClientRole {}
+impl SendsTo<AgentRole, LoadSessionRequest> for ClientRole {}
+impl SendsTo<AgentRole, PromptRequest> for ClientRole {}
+impl SendsTo<AgentRole, SetSessionModeRequest> for ClientRole {}
 
 // Client → Agent notifications
-impl SendsTo<AcpAgent, CancelNotification> for AcpClient {}
+impl SendsTo<AgentRole, CancelNotification> for ClientRole {}
 
 // Agent → Client requests
-impl SendsTo<AcpClient, RequestPermissionRequest> for AcpAgent {}
-impl SendsTo<AcpClient, ReadTextFileRequest> for AcpAgent {}
-impl SendsTo<AcpClient, WriteTextFileRequest> for AcpAgent {}
-impl SendsTo<AcpClient, CreateTerminalRequest> for AcpAgent {}
-impl SendsTo<AcpClient, TerminalOutputRequest> for AcpAgent {}
-impl SendsTo<AcpClient, ReleaseTerminalRequest> for AcpAgent {}
-impl SendsTo<AcpClient, WaitForTerminalExitRequest> for AcpAgent {}
-impl SendsTo<AcpClient, KillTerminalCommandRequest> for AcpAgent {}
+impl SendsTo<ClientRole, RequestPermissionRequest> for AgentRole {}
+impl SendsTo<ClientRole, ReadTextFileRequest> for AgentRole {}
+impl SendsTo<ClientRole, WriteTextFileRequest> for AgentRole {}
+impl SendsTo<ClientRole, CreateTerminalRequest> for AgentRole {}
+impl SendsTo<ClientRole, TerminalOutputRequest> for AgentRole {}
+impl SendsTo<ClientRole, ReleaseTerminalRequest> for AgentRole {}
+impl SendsTo<ClientRole, WaitForTerminalExitRequest> for AgentRole {}
+impl SendsTo<ClientRole, KillTerminalCommandRequest> for AgentRole {}
 
 // Agent → Client notifications
-impl SendsTo<AcpClient, SessionNotification> for AcpAgent {}
-
-// Proxy → Agent: proxy can send anything to agent that client can send
-impl<M> SendsTo<AcpAgent, M> for AcpProxy where AcpClient: SendsTo<AcpAgent, M> {}
-
-// Proxy → Client: proxy can send anything to client that agent can send
-impl<M> SendsTo<AcpClient, M> for AcpProxy where AcpAgent: SendsTo<AcpClient, M> {}
+impl SendsTo<ClientRole, SessionNotification> for AgentRole {}
 
 // UntypedMessage can be sent in either direction (for generic code)
-impl SendsTo<AcpAgent, UntypedMessage> for AcpClient {}
-impl SendsTo<AcpClient, UntypedMessage> for AcpAgent {}
+impl SendsTo<AgentRole, UntypedMessage> for ClientRole {}
+impl SendsTo<ClientRole, UntypedMessage> for AgentRole {}
+
+// Proxy → Agent: proxy can send anything to agent that client can send
+impl<M> SendsTo<AgentRole, M> for ProxyRole where ClientRole: SendsTo<AgentRole, M> {}
+
+// Proxy → Client: proxy can send anything to client that agent can send
+impl<M> SendsTo<ClientRole, M> for ProxyRole where AgentRole: SendsTo<ClientRole, M> {}
 
 // ============================================================================
 // ReceivesFromRole implementations
 // ============================================================================
 
-// Client ↔ Agent: passthrough (default counterparts, no transformation needed)
-impl ReceivesFromRole<AcpAgent, AcpAgent> for AcpClient {
-    async fn receive_message(
-        &self,
-        _sender: &AcpAgent,
-        message: MessageAndCx<Self, AcpAgent>,
-        handler: &mut impl JrMessageHandler<Self, AcpAgent>,
-    ) -> Result<Handled<MessageAndCx<Self, AcpAgent>>, crate::Error> {
-        handler.handle_message(message).await
-    }
-}
-
-impl ReceivesFromRole<AcpClient, AcpClient> for AcpAgent {
-    async fn receive_message(
-        &self,
-        _sender: &AcpClient,
-        message: MessageAndCx<Self, AcpClient>,
-        handler: &mut impl JrMessageHandler<Self, AcpClient>,
-    ) -> Result<Handled<MessageAndCx<Self, AcpClient>>, crate::Error> {
-        handler.handle_message(message).await
-    }
-}
-
 // Proxy ↔ Client: passthrough (proxy talks to client without wrapping)
-impl ReceivesFromRole<AcpClient, AcpClient> for AcpProxy {
-    async fn receive_message(
-        &self,
-        _sender: &AcpClient,
-        message: MessageAndCx<Self, AcpClient>,
-        handler: &mut impl JrMessageHandler<Self, AcpClient>,
-    ) -> Result<Handled<MessageAndCx<Self, AcpClient>>, crate::Error> {
-        handler.handle_message(message).await
-    }
-}
-
-// Agent ← Proxy: unwrap SuccessorRequest/SuccessorNotification envelopes
-// Note: Physical connection is to Agent, logical sender is also Agent
-impl ReceivesFromRole<AcpAgent, AcpAgent> for AcpProxy {
-    async fn receive_message(
-        &self,
-        _sender: &AcpAgent,
-        message: MessageAndCx<Self, AcpAgent>,
-        handler: &mut impl JrMessageHandler<Self, AcpAgent>,
-    ) -> Result<Handled<MessageAndCx<Self, AcpAgent>>, crate::Error> {
-        MatchMessage::new(message)
-            .if_request(
-                async |request: SuccessorRequest<UntypedMessage>, request_cx| match handler
-                    .handle_message(MessageAndCx::Request(request.request, request_cx))
-                    .await?
-                {
-                    Handled::Yes => Ok(Handled::Yes),
-                    Handled::No(MessageAndCx::Request(r, cx)) => Ok(Handled::No((
-                        SuccessorRequest {
-                            request: r,
-                            meta: request.meta,
-                        },
-                        cx,
-                    ))),
-                    Handled::No(_) => unreachable!(),
-                },
-            )
-            .await
-            .if_notification(
-                async |notification: SuccessorNotification<UntypedMessage>, cx| match handler
-                    .handle_message(MessageAndCx::Notification(notification.notification, cx))
-                    .await?
-                {
-                    Handled::Yes => Ok(Handled::Yes),
-                    Handled::No(MessageAndCx::Notification(n, cx)) => Ok(Handled::No((
-                        SuccessorNotification {
-                            notification: n,
-                            meta: notification.meta,
-                        },
-                        cx,
-                    ))),
-                    Handled::No(_) => unreachable!(),
-                },
-            )
-            .await
-            .done()
-    }
-}
 
 // ============================================================================
 // AcpConductor role
@@ -297,130 +226,88 @@ impl ReceivesFromRole<AcpAgent, AcpAgent> for AcpProxy {
 ///
 /// Both are [`DefaultCounterpart`] connections since the conductor sends
 /// directly to its physical counterpart without wrapping.
-#[derive(Debug, Default, Clone)]
-pub struct AcpConductor;
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ConductorRole;
 
-impl JrRole for AcpConductor {}
+impl JrRole for ConductorRole {}
 
 // Conductor → Proxy: passthrough
-impl SendsToRole<AcpProxy> for AcpConductor {
-    fn transform_request(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpProxy,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
 
-    fn transform_notification(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpProxy,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-}
-
-// Conductor → Agent: passthrough
-impl SendsToRole<AcpAgent> for AcpConductor {
-    fn transform_request(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpAgent,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    fn transform_notification(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpAgent,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-}
-
-// Conductor receives from Proxy: passthrough
-impl ReceivesFromRole<AcpProxy, AcpProxy> for AcpConductor {
-    async fn receive_message(
-        &self,
-        _sender: &AcpProxy,
-        message: MessageAndCx<Self, AcpProxy>,
-        handler: &mut impl JrMessageHandler<Self, AcpProxy>,
-    ) -> Result<Handled<MessageAndCx<Self, AcpProxy>>, crate::Error> {
-        handler.handle_message(message).await
-    }
-}
-
-// Conductor receives from Agent: passthrough
-impl ReceivesFromRole<AcpAgent, AcpAgent> for AcpConductor {
-    async fn receive_message(
-        &self,
-        _sender: &AcpAgent,
-        message: MessageAndCx<Self, AcpAgent>,
-        handler: &mut impl JrMessageHandler<Self, AcpAgent>,
-    ) -> Result<Handled<MessageAndCx<Self, AcpAgent>>, crate::Error> {
-        handler.handle_message(message).await
-    }
-}
-
-// Proxy → Conductor: passthrough (physical connection)
-impl SendsToRole<AcpConductor> for AcpProxy {
-    fn transform_request(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpConductor,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-
-    fn transform_notification(
-        &self,
-        message: UntypedMessage,
-        _target: &AcpConductor,
-    ) -> Result<UntypedMessage, crate::Error> {
-        Ok(message)
-    }
-}
-
-// Proxy receives from Conductor: passthrough
-impl ReceivesFromRole<AcpConductor, AcpConductor> for AcpProxy {
-    async fn receive_message(
-        &self,
-        _sender: &AcpConductor,
-        message: MessageAndCx<Self, AcpConductor>,
-        handler: &mut impl JrMessageHandler<Self, AcpConductor>,
-    ) -> Result<Handled<MessageAndCx<Self, AcpConductor>>, crate::Error> {
-        handler.handle_message(message).await
-    }
-}
-
-// Conductor can send any message to Proxy or Agent (for generic forwarding)
-impl SendsTo<AcpProxy, UntypedMessage> for AcpConductor {}
-impl SendsTo<AcpAgent, UntypedMessage> for AcpConductor {}
+// Conductor can send any message to Proxy, Agent, or Client (for generic forwarding)
+impl SendsTo<ProxyRole, UntypedMessage> for ConductorRole {}
+impl SendsTo<AgentRole, UntypedMessage> for ConductorRole {}
+impl SendsTo<ClientRole, UntypedMessage> for ConductorRole {}
 
 // ============================================================================
 // Counterpart and DefaultCounterpart implementations
 // ============================================================================
 
-// Client ↔ Agent: direct connection with default
-impl Counterpart<AcpAgent> for AcpClient {}
-impl DefaultCounterpart<AcpAgent> for AcpClient {}
+/// Client ↔ Agent: direct connection with default
+impl HasCounterpart<AgentRole> for ClientRole {}
 
-impl Counterpart<AcpClient> for AcpAgent {}
-impl DefaultCounterpart<AcpClient> for AcpAgent {}
+/// Client ↔ Agent: direct connection with default
+impl HasCounterpart<ClientRole> for AgentRole {}
 
-// Conductor ↔ Proxy: connection with default
-impl Counterpart<AcpProxy> for AcpConductor {}
-impl DefaultCounterpart<AcpProxy> for AcpConductor {}
+/// Conductor ↔ Proxy: connection with default
+impl HasCounterpart<ProxyRole> for ConductorRole {}
 
-// Conductor ↔ Agent: connection with default
-impl Counterpart<AcpAgent> for AcpConductor {}
-impl DefaultCounterpart<AcpAgent> for AcpConductor {}
+/// Conductor ↔ Agent: connection with default
+impl HasCounterpart<AgentRole> for ConductorRole {}
+
+/// Conductor ↔ Client: conductor can talk to clients (but client sees conductor as agent)
+impl HasCounterpart<ClientRole> for ConductorRole {}
 
 // Proxy ↔ Conductor: physical connection, but NO DefaultCounterpart
 // (proxy must explicitly specify Client or Agent as logical target)
-impl Counterpart<AcpConductor> for AcpProxy {}
+impl HasCounterpart<ConductorRole> for ProxyRole {
+    fn default_message_handler(
+        message: MessageAndCx<Self, ConductorRole>,
+    ) -> Result<(), crate::Error> {
+        // Default behavior: proxy messages.
+        match message {
+            MessageAndCx::Request(request, request_cx) => {
+                let cx = request_cx.connection_cx();
+                match <SuccessorMessage>::parse_request(request.method(), request.params()) {
+                    // If we are receiving a request from our successor (the agent),
+                    // then our default is to proxy it to the client.
+                    Some(Ok(SuccessorMessage {
+                        message: request,
+                        meta: _,
+                    })) => cx
+                        .send_request_to(ClientRole, request)
+                        .forward_to_request_cx(request_cx),
+                    Some(Err(err)) => request_cx.respond_with_error(err),
+                    None => {
+                        // If we are receiving a request from the client,
+                        // then our default is to proxy it to the agent.
+                        cx.send_request_to(AgentRole, request)
+                            .forward_to_request_cx(request_cx)
+                    }
+                }
+            }
+
+            MessageAndCx::Notification(notification, cx) => {
+                match <SuccessorMessage>::parse_notification(
+                    notification.method(),
+                    notification.params(),
+                ) {
+                    // If we are receiving a request from our successor (the agent),
+                    // then our default is to proxy it to the client.
+                    Some(Ok(SuccessorMessage {
+                        message: notification,
+                        meta: _,
+                    })) => cx.send_notification_to(ClientRole, notification),
+                    Some(Err(err)) => cx.send_error_notification(err),
+                    None => {
+                        // If we are receiving a request from the client,
+                        // then our default is to proxy it to the agent.
+                        cx.send_notification_to(AgentRole, notification)
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ============================================================================
 // Convenience constructors for JrHandlerChain
@@ -429,7 +316,7 @@ impl Counterpart<AcpConductor> for AcpProxy {}
 use crate::jsonrpc::JrHandlerChain;
 use crate::jsonrpc::handlers::NullHandler;
 
-impl AcpAgent {
+impl AgentRole {
     /// Create a handler chain for an agent talking to a client.
     ///
     /// # Example
@@ -444,12 +331,12 @@ impl AcpAgent {
     ///     .serve(transport)
     ///     .await?;
     /// ```
-    pub fn to_client(self) -> JrHandlerChain<AcpAgent, AcpClient, NullHandler> {
-        JrHandlerChain::new(self, AcpClient)
+    pub fn to_client(self) -> JrHandlerChain<NullHandler<AgentRole, ClientRole>> {
+        JrHandlerChain::new(self, ClientRole)
     }
 }
 
-impl AcpClient {
+impl ClientRole {
     /// Create a handler chain for a client talking to an agent.
     ///
     /// # Example
@@ -467,12 +354,12 @@ impl AcpClient {
     ///     })
     ///     .await?;
     /// ```
-    pub fn to_agent(self) -> JrHandlerChain<AcpClient, AcpAgent, NullHandler> {
-        JrHandlerChain::new(self, AcpAgent)
+    pub fn to_agent(self) -> JrHandlerChain<NullHandler<ClientRole, AgentRole>> {
+        JrHandlerChain::new(self, AgentRole)
     }
 }
 
-impl AcpProxy {
+impl ProxyRole {
     /// Create a handler chain for a proxy talking to a conductor.
     ///
     /// # Example
@@ -487,19 +374,19 @@ impl AcpProxy {
     ///     .serve(transport)
     ///     .await?;
     /// ```
-    pub fn to_conductor(self) -> JrHandlerChain<AcpProxy, AcpConductor, NullHandler> {
-        JrHandlerChain::new(self, AcpConductor)
+    pub fn to_conductor(self) -> JrHandlerChain<NullHandler<ProxyRole, ConductorRole>> {
+        JrHandlerChain::new(self, ConductorRole)
     }
 }
 
-impl AcpConductor {
+impl ConductorRole {
     /// Create a handler chain for a conductor talking to a proxy.
-    pub fn to_proxy(self) -> JrHandlerChain<AcpConductor, AcpProxy, NullHandler> {
-        JrHandlerChain::new(self, AcpProxy)
+    pub fn to_proxy(self) -> JrHandlerChain<NullHandler<ConductorRole, ProxyRole>> {
+        JrHandlerChain::new(self, ProxyRole)
     }
 
     /// Create a handler chain for a conductor talking to an agent.
-    pub fn to_agent(self) -> JrHandlerChain<AcpConductor, AcpAgent, NullHandler> {
-        JrHandlerChain::new(self, AcpAgent)
+    pub fn to_agent(self) -> JrHandlerChain<NullHandler<ConductorRole, AgentRole>> {
+        JrHandlerChain::new(self, AgentRole)
     }
 }

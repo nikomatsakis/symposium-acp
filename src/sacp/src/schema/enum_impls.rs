@@ -34,6 +34,10 @@ impl JrMessage for ClientRequest {
             ClientRequest::ExtMethodRequest(ext) => &ext.method,
         }
     }
+}
+
+impl JrRequest for ClientRequest {
+    type Response = serde_json::Value;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         let result = match method {
@@ -60,18 +64,6 @@ impl JrMessage for ClientRequest {
 
         Some(result)
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // ClientRequest is for requests only, not notifications
-        None
-    }
-}
-
-impl JrRequest for ClientRequest {
-    type Response = serde_json::Value;
 }
 
 impl JrMessage for ClientNotification {
@@ -86,15 +78,9 @@ impl JrMessage for ClientNotification {
             ClientNotification::ExtNotification(ext) => &ext.method,
         }
     }
+}
 
-    fn parse_request(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // ClientNotification is for notifications only, not requests
-        None
-    }
-
+impl JrNotification for ClientNotification {
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
@@ -120,8 +106,6 @@ impl JrMessage for ClientNotification {
     }
 }
 
-impl JrNotification for ClientNotification {}
-
 // ============================================================================
 // Client side (messages that clients/editors receive)
 // ============================================================================
@@ -145,6 +129,10 @@ impl JrMessage for AgentRequest {
             AgentRequest::ExtMethodRequest(ext) => &ext.method,
         }
     }
+}
+
+impl JrRequest for AgentRequest {
+    type Response = serde_json::Value;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         let result = match method {
@@ -177,18 +165,6 @@ impl JrMessage for AgentRequest {
 
         Some(result)
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // AgentRequest is for requests only, not notifications
-        None
-    }
-}
-
-impl JrRequest for AgentRequest {
-    type Response = serde_json::Value;
 }
 
 impl JrMessage for AgentNotification {
@@ -203,15 +179,9 @@ impl JrMessage for AgentNotification {
             AgentNotification::ExtNotification(ext) => &ext.method,
         }
     }
+}
 
-    fn parse_request(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // AgentNotification is for notifications only, not requests
-        None
-    }
-
+impl JrNotification for AgentNotification {
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
@@ -236,5 +206,3 @@ impl JrMessage for AgentNotification {
         Some(result)
     }
 }
-
-impl JrNotification for AgentNotification {}

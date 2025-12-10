@@ -26,6 +26,10 @@ impl JrMessage for RequestPermissionRequest {
     fn method(&self) -> &str {
         "session/request_permission"
     }
+}
+
+impl JrRequest for RequestPermissionRequest {
+    type Response = RequestPermissionResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "session/request_permission" {
@@ -33,18 +37,6 @@ impl JrMessage for RequestPermissionRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for RequestPermissionRequest {
-    type Response = RequestPermissionResponse;
 }
 
 impl JrResponsePayload for RequestPermissionResponse {
@@ -70,6 +62,10 @@ impl JrMessage for WriteTextFileRequest {
     fn method(&self) -> &str {
         "fs/write_text_file"
     }
+}
+
+impl JrRequest for WriteTextFileRequest {
+    type Response = WriteTextFileResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "fs/write_text_file" {
@@ -77,18 +73,6 @@ impl JrMessage for WriteTextFileRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for WriteTextFileRequest {
-    type Response = WriteTextFileResponse;
 }
 
 impl JrResponsePayload for WriteTextFileResponse {
@@ -114,6 +98,10 @@ impl JrMessage for ReadTextFileRequest {
     fn method(&self) -> &str {
         "fs/read_text_file"
     }
+}
+
+impl JrRequest for ReadTextFileRequest {
+    type Response = ReadTextFileResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "fs/read_text_file" {
@@ -121,18 +109,6 @@ impl JrMessage for ReadTextFileRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for ReadTextFileRequest {
-    type Response = ReadTextFileResponse;
 }
 
 impl JrResponsePayload for ReadTextFileResponse {
@@ -158,6 +134,10 @@ impl JrMessage for CreateTerminalRequest {
     fn method(&self) -> &str {
         "terminal/create"
     }
+}
+
+impl JrRequest for CreateTerminalRequest {
+    type Response = CreateTerminalResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "terminal/create" {
@@ -165,18 +145,6 @@ impl JrMessage for CreateTerminalRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for CreateTerminalRequest {
-    type Response = CreateTerminalResponse;
 }
 
 impl JrResponsePayload for CreateTerminalResponse {
@@ -202,6 +170,10 @@ impl JrMessage for TerminalOutputRequest {
     fn method(&self) -> &str {
         "terminal/output"
     }
+}
+
+impl JrRequest for TerminalOutputRequest {
+    type Response = TerminalOutputResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "terminal/output" {
@@ -209,18 +181,6 @@ impl JrMessage for TerminalOutputRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for TerminalOutputRequest {
-    type Response = TerminalOutputResponse;
 }
 
 impl JrResponsePayload for TerminalOutputResponse {
@@ -246,6 +206,10 @@ impl JrMessage for ReleaseTerminalRequest {
     fn method(&self) -> &str {
         "terminal/release"
     }
+}
+
+impl JrRequest for ReleaseTerminalRequest {
+    type Response = ReleaseTerminalResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "terminal/release" {
@@ -253,18 +217,6 @@ impl JrMessage for ReleaseTerminalRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for ReleaseTerminalRequest {
-    type Response = ReleaseTerminalResponse;
 }
 
 impl JrResponsePayload for ReleaseTerminalResponse {
@@ -290,6 +242,10 @@ impl JrMessage for WaitForTerminalExitRequest {
     fn method(&self) -> &str {
         "terminal/wait_for_exit"
     }
+}
+
+impl JrRequest for WaitForTerminalExitRequest {
+    type Response = WaitForTerminalExitResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "terminal/wait_for_exit" {
@@ -297,18 +253,6 @@ impl JrMessage for WaitForTerminalExitRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for WaitForTerminalExitRequest {
-    type Response = WaitForTerminalExitResponse;
 }
 
 impl JrResponsePayload for WaitForTerminalExitResponse {
@@ -334,6 +278,10 @@ impl JrMessage for KillTerminalCommandRequest {
     fn method(&self) -> &str {
         "terminal/kill"
     }
+}
+
+impl JrRequest for KillTerminalCommandRequest {
+    type Response = KillTerminalCommandResponse;
 
     fn parse_request(method: &str, params: &impl Serialize) -> Option<Result<Self, crate::Error>> {
         if method != "terminal/kill" {
@@ -341,18 +289,6 @@ impl JrMessage for KillTerminalCommandRequest {
         }
         Some(json_cast(params))
     }
-
-    fn parse_notification(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a request, not a notification
-        None
-    }
-}
-
-impl JrRequest for KillTerminalCommandRequest {
-    type Response = KillTerminalCommandResponse;
 }
 
 impl JrResponsePayload for KillTerminalCommandResponse {

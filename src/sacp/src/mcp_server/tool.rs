@@ -3,10 +3,16 @@
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
 
+use crate::JrRole;
+
 use super::McpContext;
 
 /// Defines an MCP tool.
-pub trait McpTool: Send + Sync {
+pub trait McpTool<Local, Counterpart>: Send + Sync
+where
+    Local: JrRole,
+    Counterpart: JrRole,
+{
     /// The type of input the tool accepts.
     type Input: JsonSchema + DeserializeOwned + Send + 'static;
 
@@ -28,6 +34,6 @@ pub trait McpTool: Send + Sync {
     fn call_tool(
         &self,
         input: Self::Input,
-        context: McpContext,
+        context: McpContext<Local, Counterpart>,
     ) -> impl Future<Output = Result<Self::Output, crate::Error>> + Send;
 }

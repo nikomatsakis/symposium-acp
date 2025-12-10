@@ -14,17 +14,21 @@ use serde::{Serialize, de::DeserializeOwned};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::{McpContext, McpTool};
-use crate::{BoxFuture, ByteStreams, Component};
+use crate::{BoxFuture, ByteStreams, Component, JrRole};
 
 /// Our MCP server implementation.
 #[derive(Clone, Default)]
-pub struct McpServer {
+pub struct McpServer<Local: JrRole, Counterpart: JrRole> {
+    #[expect(dead_code)]
+    local: Local,
+    #[expect(dead_code)]
+    counterpart: Counterpart,
     instructions: Option<String>,
     tool_models: Vec<rmcp::model::Tool>,
-    tools: FxHashMap<String, Arc<dyn ErasedMcpTool>>,
+    tools: FxHashMap<String, Arc<dyn ErasedMcpTool<Local, Counterpart>>>,
 }
 
-impl McpServer {
+impl<Local: JrRole, Counterpart: JrRole> McpServer<Local, Counterpart> {
     /// Create an empty server with no content.
     pub fn new() -> Self {
         Self::default()
@@ -37,7 +41,7 @@ impl McpServer {
     }
 
     /// Add a tool to the server.
-    pub fn tool(mut self, tool: impl McpTool + 'static) -> Self {
+    pub fn tool(mut self, tool: impl McpTool<Local, Counterpart> + 'static) -> Self {
         let tool_model = make_tool_model(&tool);
         self.tool_models.push(tool_model);
         self.tools.insert(tool.name(), make_erased_mcp_tool(tool));
@@ -76,8 +80,14 @@ impl McpServer {
     where
         P: JsonSchema + DeserializeOwned + 'static + Send,
         R: JsonSchema + Serialize + 'static + Send,
-        F: AsyncFn(P, McpContext) -> Result<R, crate::Error> + Send + Sync + 'static,
-        H: Fn(&F, P, McpContext) -> BoxFuture<'_, Result<R, crate::Error>> + Send + Sync + 'static,
+        F: AsyncFn(P, McpContext<Local, Counterpart>) -> Result<R, crate::Error>
+            + Send
+            + Sync
+            + 'static,
+        H: Fn(&F, P, McpContext<Local, Counterpart>) -> BoxFuture<'_, Result<R, crate::Error>>
+            + Send
+            + Sync
+            + 'static,
     {
         struct ToolFnTool<P, R, F, H> {
             name: String,
@@ -87,12 +97,17 @@ impl McpServer {
             phantom: PhantomData<fn(P) -> R>,
         }
 
-        impl<P, R, F, H> McpTool for ToolFnTool<P, R, F, H>
+        impl<P, R, F, H, Local, Counterpart> McpTool<Local, Counterpart> for ToolFnTool<P, R, F, H>
         where
+            Local: JrRole,
+            Counterpart: JrRole,
             P: JsonSchema + DeserializeOwned + 'static + Send,
             R: JsonSchema + Serialize + 'static + Send,
-            F: AsyncFn(P, McpContext) -> Result<R, crate::Error> + Send + Sync + 'static,
-            H: Fn(&F, P, McpContext) -> BoxFuture<'_, Result<R, crate::Error>>
+            F: AsyncFn(P, McpContext<Local, Counterpart>) -> Result<R, crate::Error>
+                + Send
+                + Sync
+                + 'static,
+            H: Fn(&F, P, McpContext<Local, Counterpart>) -> BoxFuture<'_, Result<R, crate::Error>>
                 + Send
                 + Sync
                 + 'static,
@@ -108,7 +123,11 @@ impl McpServer {
                 self.description.clone()
             }
 
-            async fn call_tool(&self, params: P, cx: McpContext) -> Result<R, crate::Error> {
+            async fn call_tool(
+                &self,
+                params: P,
+                cx: McpContext<Local, Counterpart>,
+            ) -> Result<R, crate::Error> {
                 (self.to_future_hack)(&self.func, params, cx).await
             }
         }
@@ -124,7 +143,10 @@ impl McpServer {
 
     /// Create a connection to communicate with this server given the MCP context.
     /// This is pub(crate) because it is only used internally by the MCP server registry.
-    pub(crate) fn new_connection(&self, mcp_cx: McpContext) -> McpServerConnection {
+    pub(crate) fn new_connection(
+        &self,
+        mcp_cx: McpContext<Local, Counterpart>,
+    ) -> McpServerConnection<Local, Counterpart> {
         McpServerConnection {
             service: self.clone(),
             mcp_cx,
@@ -133,12 +155,12 @@ impl McpServer {
 }
 
 /// An MCP server instance connected to the ACP framework.
-pub(crate) struct McpServerConnection {
-    service: McpServer,
-    mcp_cx: McpContext,
+pub(crate) struct McpServerConnection<Local: JrRole, Counterpart: JrRole> {
+    service: McpServer<Local, Counterpart>,
+    mcp_cx: McpContext<Local, Counterpart>,
 }
 
-impl Component for McpServerConnection {
+impl<Local: JrRole, Counterpart: JrRole> Component for McpServerConnection<Local, Counterpart> {
     async fn serve(self, client: impl Component) -> Result<(), crate::Error> {
         // Create tokio byte streams that rmcp expects
         let (mcp_server_stream, mcp_client_stream) = tokio::io::duplex(8192);
@@ -168,7 +190,7 @@ impl Component for McpServerConnection {
     }
 }
 
-impl ServerHandler for McpServerConnection {
+impl<Local: JrRole, Counterpart: JrRole> ServerHandler for McpServerConnection<Local, Counterpart> {
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParam,
@@ -230,16 +252,18 @@ impl ServerHandler for McpServerConnection {
 }
 
 /// Erased version of the MCP tool trait that is dyn-compatible.
-trait ErasedMcpTool: Send + Sync {
+trait ErasedMcpTool<Local: JrRole, Counterpart: JrRole>: Send + Sync {
     fn call_tool(
         &self,
         input: serde_json::Value,
-        context: McpContext,
+        context: McpContext<Local, Counterpart>,
     ) -> BoxFuture<'_, Result<serde_json::Value, crate::Error>>;
 }
 
 /// Create an `rmcp` tool model from our [`McpTool`] trait.
-fn make_tool_model<M: McpTool>(tool: &M) -> Tool {
+fn make_tool_model<Local: JrRole, Counterpart: JrRole, M: McpTool<Local, Counterpart>>(
+    tool: &M,
+) -> Tool {
     rmcp::model::Tool {
         name: tool.name().into(),
         title: tool.title(),
@@ -252,16 +276,28 @@ fn make_tool_model<M: McpTool>(tool: &M) -> Tool {
 }
 
 /// Create a [`ErasedMcpTool`] from a [`McpTool`], erasing the type details.
-fn make_erased_mcp_tool<'s, M: McpTool + 's>(tool: M) -> Arc<dyn ErasedMcpTool + 's> {
-    struct ErasedMcpToolImpl<M: McpTool> {
+fn make_erased_mcp_tool<
+    's,
+    Local: JrRole,
+    Counterpart: JrRole,
+    M: McpTool<Local, Counterpart> + 's,
+>(
+    tool: M,
+) -> Arc<dyn ErasedMcpTool<Local, Counterpart> + 's> {
+    struct ErasedMcpToolImpl<M> {
         tool: M,
     }
 
-    impl<M: McpTool> ErasedMcpTool for ErasedMcpToolImpl<M> {
+    impl<Local, Counterpart, M> ErasedMcpTool<Local, Counterpart> for ErasedMcpToolImpl<M>
+    where
+        Local: JrRole,
+        Counterpart: JrRole,
+        M: McpTool<Local, Counterpart>,
+    {
         fn call_tool(
             &self,
             input: serde_json::Value,
-            context: McpContext,
+            context: McpContext<Local, Counterpart>,
         ) -> BoxFuture<'_, Result<serde_json::Value, crate::Error>> {
             Box::pin(async move {
                 let input = serde_json::from_value(input).map_err(crate::util::internal_error)?;

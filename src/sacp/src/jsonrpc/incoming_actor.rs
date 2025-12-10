@@ -5,6 +5,7 @@ use futures_concurrency::stream::StreamExt as _;
 use fxhash::FxHashMap;
 use uuid::Uuid;
 
+use crate::HasCounterpart;
 use crate::MessageAndCx;
 use crate::UntypedMessage;
 use crate::jsonrpc::JrConnectionCx;
@@ -30,8 +31,11 @@ pub(super) async fn incoming_protocol_actor<Local: JrRole, Remote: JrRole>(
     transport_rx: mpsc::UnboundedReceiver<Result<jsonrpcmsg::Message, crate::Error>>,
     dynamic_handler_rx: mpsc::UnboundedReceiver<DynamicHandlerMessage<Local, Remote>>,
     reply_tx: mpsc::UnboundedSender<ReplyMessage>,
-    mut handler: impl JrMessageHandler<Local, Remote>,
-) -> Result<(), crate::Error> {
+    mut handler: impl JrMessageHandler<Local = Local, Remote = Remote>,
+) -> Result<(), crate::Error>
+where
+    Local: HasCounterpart<Remote>,
+{
     let mut my_rx = transport_rx
         .map(IncomingProtocolMsg::Transport)
         .merge(dynamic_handler_rx.map(IncomingProtocolMsg::DynamicHandler));
@@ -101,8 +105,11 @@ async fn dispatch_request<Local: JrRole, Remote: JrRole>(
     json_rpc_cx: &JrConnectionCx<Local, Remote>,
     request: jsonrpcmsg::Request,
     dynamic_handlers: &mut FxHashMap<Uuid, Box<dyn DynamicHandler<Local, Remote>>>,
-    handler: &mut impl JrMessageHandler<Local, Remote>,
-) -> Result<(), crate::Error> {
+    handler: &mut impl JrMessageHandler<Local = Local, Remote = Remote>,
+) -> Result<(), crate::Error>
+where
+    Local: HasCounterpart<Remote>,
+{
     let message = UntypedMessage::new(&request.method, &request.params).expect("well-formed JSON");
 
     let mut message_cx = match &request.id {
@@ -135,7 +142,7 @@ async fn dispatch_request<Local: JrRole, Remote: JrRole>(
 
         Handled::No(m) => {
             tracing::debug!(method = ?request.method, ?request.id, "No suitable handler found");
-            m.respond_with_error(crate::Error::method_not_found().with_data(request.method))
+            <Local as HasCounterpart<Remote>>::default_message_handler(m)
         }
     }
 }

@@ -1,65 +1,120 @@
 use crate::jsonrpc::{Handled, IntoHandled, JrMessageHandler};
-use crate::role::{JrRole, ReceivesFromRole};
-use crate::{JrConnectionCx, JrNotification, JrRequest, MessageAndCx, UntypedMessage};
+use crate::role::JrRole;
+use crate::{
+    HasCounterpart, HasRemoteRole, JrConnectionCx, JrNotification, JrRequest, MessageAndCx,
+    UntypedMessage,
+};
 // Types re-exported from crate root
 use super::JrRequestCx;
 use std::marker::PhantomData;
 use std::ops::AsyncFnMut;
 
 /// Null handler that accepts no messages.
-#[derive(Default)]
-pub struct NullHandler {
-    _private: (),
+pub struct NullHandler<Local: JrRole, Remote: JrRole>
+where
+    Local: HasRemoteRole<Remote>,
+{
+    local: Local,
+    remote: Remote,
 }
 
-impl<Local: JrRole, Remote: JrRole> JrMessageHandler<Local, Remote> for NullHandler {
+impl<Local: JrRole, Remote: JrRole> NullHandler<Local, Remote>
+where
+    Local: HasRemoteRole<Remote>,
+{
+    /// Creates a new null handler.
+    pub fn new(local: Local, remote: Remote) -> Self {
+        Self { local, remote }
+    }
+
+    /// Returns the local role.
+    pub fn local(&self) -> Local {
+        self.local.clone()
+    }
+
+    /// Returns the remote role.
+    pub fn remote(&self) -> Remote {
+        self.remote.clone()
+    }
+}
+
+impl<Local: JrRole, Remote: JrRole, Counterpart: JrRole> JrMessageHandler
+    for NullHandler<Local, Remote>
+where
+    Local: JrRole + HasRemoteRole<Remote, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
+{
+    type Local = Local;
+    type Remote = Remote;
+    type Counterpart = Counterpart;
+
     fn describe_chain(&self) -> impl std::fmt::Debug {
         "(null)"
     }
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>
-    {
+        message: MessageAndCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error> {
         Ok(Handled::No(message))
     }
 }
 
 /// Handler for typed request messages
-pub struct RequestHandler<Local: JrRole, Remote: JrRole, Req: JrRequest = UntypedMessage, F = ()> {
+pub struct RequestHandler<Local: JrRole, Remote: JrRole, Req: JrRequest = UntypedMessage, F = ()>
+where
+    Local: HasRemoteRole<Remote>,
+{
     handler: F,
-    phantom: PhantomData<fn(Local, Remote, Req)>,
+    local: Local,
+    remote: Remote,
+    phantom: PhantomData<fn(Req)>,
 }
 
-impl<Local: JrRole, Remote: JrRole, Req: JrRequest, F> RequestHandler<Local, Remote, Req, F> {
+impl<Local: JrRole, Remote: JrRole, Req: JrRequest, F> RequestHandler<Local, Remote, Req, F>
+where
+    Local: HasRemoteRole<Remote>,
+{
     /// Creates a new request handler
-    pub fn new(handler: F) -> Self {
+    pub fn new(local: Local, remote: Remote, handler: F) -> Self {
         Self {
             handler,
+            local,
+            remote,
             phantom: PhantomData,
         }
     }
+
+    /// Returns the local role.
+    pub fn local(&self) -> Local {
+        self.local.clone()
+    }
+
+    /// Returns the remote role.
+    pub fn remote(&self) -> Remote {
+        self.remote.clone()
+    }
 }
 
-impl<Local, Remote, Req, F, T> JrMessageHandler<Local, Remote>
+impl<Local: JrRole, Counterpart: JrRole, Remote: JrRole, Req, F, T> JrMessageHandler
     for RequestHandler<Local, Remote, Req, F>
 where
-    Local: JrRole,
-    Remote: JrRole,
+    Local: JrRole + HasRemoteRole<Remote, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
     Req: JrRequest,
-    F: AsyncFnMut(Req, JrRequestCx<Local, Remote, Req::Response>) -> Result<T, crate::Error>,
-    T: crate::IntoHandled<(Req, JrRequestCx<Local, Remote, Req::Response>)>,
+    F: AsyncFnMut(Req, JrRequestCx<Local, Counterpart, Req::Response>) -> Result<T, crate::Error>,
+    T: crate::IntoHandled<(Req, JrRequestCx<Local, Counterpart, Req::Response>)>,
 {
+    type Local = Local;
+    type Remote = Remote;
+    type Counterpart = Counterpart;
+
     fn describe_chain(&self) -> impl std::fmt::Debug {
         std::any::type_name::<Req>()
     }
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>
-    {
+        message_cx: MessageAndCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error> {
         match message_cx {
             MessageAndCx::Request(message, request_cx) => {
                 tracing::debug!(
@@ -108,39 +163,56 @@ pub struct NotificationHandler<
     F = (),
 > {
     handler: F,
-    phantom: PhantomData<fn(Local, Remote, Notif)>,
+    local: Local,
+    remote: Remote,
+    phantom: PhantomData<fn(Notif)>,
 }
 
 impl<Local: JrRole, Remote: JrRole, Notif: JrNotification, F>
     NotificationHandler<Local, Remote, Notif, F>
 {
     /// Creates a new notification handler
-    pub fn new(handler: F) -> Self {
+    pub fn new(local: Local, remote: Remote, handler: F) -> Self {
         Self {
             handler,
+            local,
+            remote,
             phantom: PhantomData,
         }
     }
+
+    /// Returns the local role.
+    pub fn local(&self) -> Local {
+        self.local.clone()
+    }
+
+    /// Returns the remote role.
+    pub fn remote(&self) -> Remote {
+        self.remote.clone()
+    }
 }
 
-impl<Local, Remote, Notif, F, T> JrMessageHandler<Local, Remote>
+impl<Local, Remote, Counterpart: JrRole, Notif, F, T> JrMessageHandler
     for NotificationHandler<Local, Remote, Notif, F>
 where
-    Local: JrRole,
+    Local: JrRole + HasRemoteRole<Remote, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
     Remote: JrRole,
     Notif: JrNotification,
-    F: AsyncFnMut(Notif, JrConnectionCx<Local, Remote>) -> Result<T, crate::Error>,
-    T: crate::IntoHandled<(Notif, JrConnectionCx<Local, Remote>)>,
+    F: AsyncFnMut(Notif, JrConnectionCx<Local, Counterpart>) -> Result<T, crate::Error>,
+    T: crate::IntoHandled<(Notif, JrConnectionCx<Local, Counterpart>)>,
 {
+    type Local = Local;
+    type Remote = Remote;
+    type Counterpart = Counterpart;
+
     fn describe_chain(&self) -> impl std::fmt::Debug {
         std::any::type_name::<Notif>()
     }
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>
-    {
+        message_cx: MessageAndCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error> {
         match message_cx {
             MessageAndCx::Notification(message, cx) => {
                 tracing::debug!(
@@ -192,34 +264,64 @@ pub struct MessageHandler<
     F = (),
 > {
     handler: F,
-    phantom: PhantomData<fn(Local, Remote, Req, Notif)>,
+    local: Local,
+    remote: Remote,
+    phantom: PhantomData<fn(Req, Notif)>,
 }
 
-impl<Local: JrRole, Remote: JrRole, Req: JrRequest, Notif: JrNotification, F, T>
-    MessageHandler<Local, Remote, Req, Notif, F>
+impl<
+    Local: JrRole,
+    Remote: JrRole,
+    Counterpart: JrRole,
+    Req: JrRequest,
+    Notif: JrNotification,
+    F,
+    T,
+> MessageHandler<Local, Remote, Req, Notif, F>
 where
-    F: AsyncFnMut(MessageAndCx<Local, Remote, Req, Notif>) -> Result<T, crate::Error>,
-    T: IntoHandled<MessageAndCx<Local, Remote, Req, Notif>>,
+    Local: JrRole + HasRemoteRole<Remote, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
+    F: AsyncFnMut(MessageAndCx<Local, Counterpart, Req, Notif>) -> Result<T, crate::Error>,
+    T: IntoHandled<MessageAndCx<Local, Counterpart, Req, Notif>>,
 {
     /// Creates a new message handler
-    pub fn new(handler: F) -> Self {
+    pub fn new(local: Local, remote: Remote, handler: F) -> Self {
         Self {
             handler,
+            local,
+            remote,
             phantom: PhantomData,
         }
     }
+
+    /// Returns the local role.
+    pub fn local(&self) -> Local {
+        self.local.clone()
+    }
+
+    /// Returns the remote role.
+    pub fn remote(&self) -> Remote {
+        self.remote.clone()
+    }
 }
 
-impl<Local, Remote, Req, Notif, F, T> JrMessageHandler<Local, Remote>
-    for MessageHandler<Local, Remote, Req, Notif, F>
-where
+impl<
     Local: JrRole,
     Remote: JrRole,
+    Counterpart: JrRole,
     Req: JrRequest,
     Notif: JrNotification,
-    F: AsyncFnMut(MessageAndCx<Local, Remote, Req, Notif>) -> Result<T, crate::Error>,
-    T: IntoHandled<MessageAndCx<Local, Remote, Req, Notif>>,
+    F,
+    T,
+> JrMessageHandler for MessageHandler<Local, Remote, Req, Notif, F>
+where
+    Local: JrRole + HasRemoteRole<Remote, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
+    F: AsyncFnMut(MessageAndCx<Local, Counterpart, Req, Notif>) -> Result<T, crate::Error>,
+    T: IntoHandled<MessageAndCx<Local, Counterpart, Req, Notif>>,
 {
+    type Local = Local;
+    type Remote = Remote;
+    type Counterpart = Counterpart;
+
     fn describe_chain(&self) -> impl std::fmt::Debug {
         format!(
             "({}, {})",
@@ -230,9 +332,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>
-    {
+        message_cx: MessageAndCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error> {
         match message_cx {
             MessageAndCx::Request(message, request_cx) => {
                 tracing::debug!(
@@ -315,19 +416,18 @@ pub struct NamedHandler<H> {
     handler: H,
 }
 
-impl<H> NamedHandler<H> {
+impl<H: JrMessageHandler> NamedHandler<H> {
     /// Creates a new named handler
     pub fn new(name: Option<String>, handler: H) -> Self {
         Self { name, handler }
     }
 }
 
-impl<H, Local, Remote> JrMessageHandler<Local, Remote> for NamedHandler<H>
-where
-    Local: JrRole,
-    Remote: JrRole,
-    H: JrMessageHandler<Local, Remote>,
-{
+impl<H: JrMessageHandler> JrMessageHandler for NamedHandler<H> {
+    type Local = H::Local;
+    type Remote = H::Remote;
+    type Counterpart = H::Counterpart;
+
     fn describe_chain(&self) -> impl std::fmt::Debug {
         format!(
             "NamedHandler({:?}, {:?})",
@@ -338,9 +438,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>
-    {
+        message: MessageAndCx<H::Local, H::Counterpart>,
+    ) -> Result<Handled<MessageAndCx<H::Local, H::Counterpart>>, crate::Error> {
         if let Some(name) = &self.name {
             crate::util::instrumented_with_connection_name(
                 name.clone(),
@@ -359,20 +458,26 @@ pub struct ChainedHandler<H1, H2> {
     handler2: H2,
 }
 
-impl<H1, H2> ChainedHandler<H1, H2> {
+impl<H1, H2> ChainedHandler<H1, H2>
+where
+    H1: JrMessageHandler,
+    H2: JrMessageHandler<Local = H1::Local, Remote = H1::Remote>,
+{
     /// Creates a new chain handler
     pub fn new(handler1: H1, handler2: H2) -> Self {
         Self { handler1, handler2 }
     }
 }
 
-impl<H1, H2, Local, Remote> JrMessageHandler<Local, Remote> for ChainedHandler<H1, H2>
+impl<H1, H2> JrMessageHandler for ChainedHandler<H1, H2>
 where
-    Local: JrRole,
-    Remote: JrRole,
-    H1: JrMessageHandler<Local, Remote>,
-    H2: JrMessageHandler<Local, Remote>,
+    H1: JrMessageHandler,
+    H2: JrMessageHandler<Local = H1::Local, Remote = H1::Remote>,
 {
+    type Local = H1::Local;
+    type Remote = H1::Remote;
+    type Counterpart = H1::Counterpart;
+
     fn describe_chain(&self) -> impl std::fmt::Debug {
         format!(
             "{:?}, {:?}",
@@ -383,9 +488,8 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>
-    {
+        message: MessageAndCx<H1::Local, H1::Counterpart>,
+    ) -> Result<Handled<MessageAndCx<H1::Local, H1::Counterpart>>, crate::Error> {
         match self.handler1.handle_message(message).await? {
             Handled::Yes => Ok(Handled::Yes),
             Handled::No(message) => self.handler2.handle_message(message).await,
@@ -400,46 +504,63 @@ where
 ///
 /// The `RxRole: ReceivesFromRole<TxRole>` bound provides the logic for
 /// transforming incoming messages (e.g., unwrapping `SuccessorRequest` envelopes).
-pub struct AdaptRole<RxRole, TxRole, H> {
-    rx_role: RxRole,
-    tx_role: TxRole,
+pub struct AdaptRole<H: JrMessageHandler> {
     handler: H,
 }
 
-impl<RxRole, TxRole, H> AdaptRole<RxRole, TxRole, H> {
+impl<H: JrMessageHandler> AdaptRole<H> {
     /// Creates a new role adapter.
-    pub fn new(rx_role: RxRole, tx_role: TxRole, handler: H) -> Self {
-        Self {
-            rx_role,
-            tx_role,
-            handler,
-        }
+    pub fn new(handler: H) -> Self {
+        Self { handler }
     }
 }
 
-impl<RxRole, TxRole, Remote, H> JrMessageHandler<RxRole, Remote> for AdaptRole<RxRole, TxRole, H>
-where
-    RxRole: ReceivesFromRole<TxRole, Remote>,
-    TxRole: JrRole,
-    Remote: JrRole,
-    H: JrMessageHandler<RxRole, Remote>,
-{
+impl<H: JrMessageHandler> JrMessageHandler for AdaptRole<H> {
+    type Local = H::Local;
+    type Remote = H::Counterpart;
+    type Counterpart = H::Counterpart;
+
     fn describe_chain(&self) -> impl std::fmt::Debug {
-        format!(
-            "AdaptRole<{}, {}>({:?})",
-            std::any::type_name::<RxRole>(),
-            std::any::type_name::<TxRole>(),
-            self.handler.describe_chain()
-        )
+        format!("AdaptRole({:?})", self.handler.describe_chain())
     }
 
     async fn handle_message(
         &mut self,
-        message: MessageAndCx<RxRole, Remote, UntypedMessage, UntypedMessage>,
-    ) -> Result<Handled<MessageAndCx<RxRole, Remote, UntypedMessage, UntypedMessage>>, crate::Error>
-    {
-        self.rx_role
-            .receive_message(&self.tx_role, message, &mut self.handler)
-            .await
+        message: MessageAndCx<H::Local, H::Counterpart>,
+    ) -> Result<Handled<MessageAndCx<H::Local, H::Counterpart>>, crate::Error> {
+        // If this is "passthrough" case, just invoke the handler.
+        if <H::Local as HasRemoteRole<H::Remote>>::PASSTHROUGH_INCOMING {
+            return self.handler.handle_message(message).await;
+        }
+
+        // Try to extract the remote message
+        let Some((remote_message, adjunct)) =
+            <H::Local>::incoming_counterpart_to_remote(<H::Remote>::default(), message.message())?
+        else {
+            return Ok(Handled::No(message));
+        };
+
+        // If we succeeded, then let's 'handled' it
+        let handled = match message {
+            MessageAndCx::Request(_, request_cx) => {
+                self.handler
+                    .handle_message(MessageAndCx::Request(remote_message, request_cx))
+                    .await?
+            }
+            MessageAndCx::Notification(_, cx) => {
+                self.handler
+                    .handle_message(MessageAndCx::Notification(remote_message, cx))
+                    .await?
+            }
+        };
+
+        // If the handler returned No, we have to recreate the result from the
+        // counterpart POV
+        match handled {
+            Handled::Yes => Ok(Handled::Yes),
+            Handled::No(message) => Ok(Handled::No(message.map_message(|m| {
+                <H::Local>::incoming_remote_to_counterpart(<H::Remote>::default(), m, adjunct)
+            })?)),
+        }
     }
 }

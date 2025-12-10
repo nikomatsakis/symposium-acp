@@ -15,15 +15,9 @@ impl JrMessage for SessionNotification {
     fn method(&self) -> &str {
         "session/update"
     }
+}
 
-    fn parse_request(
-        _method: &str,
-        _params: &impl Serialize,
-    ) -> Option<Result<Self, crate::Error>> {
-        // This is a notification, not a request
-        None
-    }
-
+impl JrNotification for SessionNotification {
     fn parse_notification(
         method: &str,
         params: &impl Serialize,
@@ -34,5 +28,3 @@ impl JrMessage for SessionNotification {
         Some(crate::util::json_cast(params))
     }
 }
-
-impl JrNotification for SessionNotification {}

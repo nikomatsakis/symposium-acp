@@ -171,10 +171,11 @@ pub mod component;
 pub mod handler;
 /// JSON-RPC connection and handler infrastructure
 mod jsonrpc;
+/// MCP declarations (minimal)
+pub mod mcp;
 /// MCP server support for providing MCP tools over ACP
 pub mod mcp_server;
 /// Proxy support for building ACP proxy components
-pub mod proxy;
 /// Role types for JSON-RPC connections
 mod role;
 /// ACP protocol schema types - all message types, requests, responses, and supporting types
@@ -201,9 +202,7 @@ pub use jsonrpc::{
     JrResponse, JrResponsePayload, Lines, MessageAndCx, UntypedMessage,
 };
 
-pub use role::{
-    Counterpart, DefaultCounterpart, JrRole, ReceivesFromRole, SendsTo, SendsToRole, UntypedRole,
-};
+pub use role::{HasCounterpart, HasRemoteRole, JrRole, SendsTo, UntypedRole};
 
 pub use component::{Component, DynComponent};
 

@@ -1,32 +1,28 @@
 use futures::future::BoxFuture;
 use uuid::Uuid;
 
+use crate::HasCounterpart;
 use crate::role::JrRole;
-use crate::{Handled, MessageAndCx, UntypedMessage, jsonrpc::JrMessageHandlerSend};
+use crate::{Handled, MessageAndCx, jsonrpc::JrMessageHandlerSend};
 
 /// Internal dyn-safe wrapper around `JrMessageHandlerSend`
-pub(crate) trait DynamicHandler<Local: JrRole, Remote: JrRole>: Send {
+pub(crate) trait DynamicHandler<Local: JrRole, Counterpart: JrRole>: Send {
     fn dyn_handle_message(
         &mut self,
-        message: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> BoxFuture<
-        '_,
-        Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>,
-    >;
+        message: MessageAndCx<Local, Counterpart>,
+    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<Local, Counterpart>>, crate::Error>>;
 
     fn dyn_describe_chain(&self) -> String;
 }
 
-impl<H: JrMessageHandlerSend<Local, Remote>, Local: JrRole, Remote: JrRole>
-    DynamicHandler<Local, Remote> for H
+impl<H: JrMessageHandlerSend> DynamicHandler<H::Local, H::Remote> for H
+where
+    H::Local: HasCounterpart<H::Remote>,
 {
     fn dyn_handle_message(
         &mut self,
-        message: MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>,
-    ) -> BoxFuture<
-        '_,
-        Result<Handled<MessageAndCx<Local, Remote, UntypedMessage, UntypedMessage>>, crate::Error>,
-    > {
+        message: MessageAndCx<H::Local, H::Remote>,
+    ) -> BoxFuture<'_, Result<Handled<MessageAndCx<H::Local, H::Remote>>, crate::Error>> {
         Box::pin(JrMessageHandlerSend::handle_message(self, message))
     }
 
