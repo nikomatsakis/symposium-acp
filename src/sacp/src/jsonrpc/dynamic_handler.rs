@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::role::JrRole;
 use crate::{Handled, MessageCx, jsonrpc::JrMessageHandlerSend};
-use crate::{HasCounterpart, JrConnection, JrConnectionCx};
+use crate::{HasCounterpart, JrConnectionCx};
 
 /// Internal dyn-safe wrapper around `JrMessageHandlerSend`
 pub(crate) trait DynamicHandler<Local: JrRole, Counterpart: JrRole>: Send {
@@ -22,9 +22,10 @@ where
 {
     fn dyn_handle_message(
         &mut self,
-        message: MessageCx<H::Local, H::Remote>,
-    ) -> BoxFuture<'_, Result<Handled<MessageCx<H::Local, H::Remote>>, crate::Error>> {
-        Box::pin(JrMessageHandlerSend::handle_message(self, message))
+        message: MessageCx,
+        cx: JrConnectionCx<H::Local, H::Remote>,
+    ) -> BoxFuture<'_, Result<Handled<MessageCx>, crate::Error>> {
+        Box::pin(JrMessageHandlerSend::handle_message(self, message, cx))
     }
 
     fn dyn_describe_chain(&self) -> String {

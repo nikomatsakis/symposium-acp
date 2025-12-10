@@ -39,7 +39,7 @@ pub struct McpServiceRegistry<Local: JrRole, Counterpart: JrRole> {
 struct McpServiceRegistryData<Local: JrRole, Counterpart: JrRole> {
     registered_by_name: FxHashMap<String, Arc<RegisteredMcpServer<Local, Counterpart>>>,
     registered_by_url: FxHashMap<String, Arc<RegisteredMcpServer<Local, Counterpart>>>,
-    connections: FxHashMap<String, mpsc::Sender<MessageCx<Local, Counterpart>>>,
+    connections: FxHashMap<String, mpsc::Sender<MessageCx>>,
 }
 
 impl<Local: JrRole, Counterpart: JrRole> McpServiceRegistry<Local, Counterpart>
@@ -195,11 +195,7 @@ where
             .cloned()
     }
 
-    fn insert_connection(
-        &self,
-        connection_id: &str,
-        tx: mpsc::Sender<MessageCx<Local, Counterpart>>,
-    ) {
+    fn insert_connection(&self, connection_id: &str, tx: mpsc::Sender<MessageCx>) {
         self.data
             .lock()
             .expect("not poisoned")
@@ -207,10 +203,7 @@ where
             .insert(connection_id.to_string(), tx);
     }
 
-    fn get_connection(
-        &self,
-        connection_id: &str,
-    ) -> Option<mpsc::Sender<MessageCx<Local, Counterpart>>> {
+    fn get_connection(&self, connection_id: &str) -> Option<mpsc::Sender<MessageCx>> {
         self.data
             .lock()
             .expect("not poisoned")
@@ -244,16 +237,9 @@ where
     async fn handle_connect_request(
         &self,
         request: McpConnectRequest,
-        request_cx: JrRequestCx<Local, Counterpart, McpConnectResponse>,
-    ) -> Result<
-        Handled<(
-            McpConnectRequest,
-            JrRequestCx<Local, Counterpart, McpConnectResponse>,
-        )>,
-        crate::Error,
-    > {
-        let outer_cx = request_cx.connection_cx();
-
+        request_cx: JrRequestCx<McpConnectResponse>,
+        outer_cx: JrConnectionCx<Local, Counterpart>,
+    ) -> Result<Handled<(McpConnectRequest, JrRequestCx<McpConnectResponse>)>, crate::Error> {
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
         let Some(registered_server) = self.get_registered_server_by_url(&request.acp_url) else {
             return Ok(Handled::No((request, request_cx)));
@@ -273,34 +259,27 @@ where
             let outer_cx = outer_cx.clone();
 
             JrHandlerChain::new(McpClientRole, McpServerRole)
-                .on_receive_message(
-                    async move |message: MessageCx<McpClientRole, McpServerRole>| {
-                        // Wrap the message in McpOverAcp{Request,Notification} and forward to successor
-                        let wrapped = message.map(
-                            |request, request_cx| {
-                                (
-                                    McpOverAcpMessage {
-                                        connection_id: connection_id.clone(),
-                                        message: request,
-                                        meta: None,
-                                    },
-                                    request_cx,
-                                )
-                            },
-                            |notification, cx| {
-                                (
-                                    McpOverAcpMessage {
-                                        connection_id: connection_id.clone(),
-                                        message: notification,
-                                        meta: None,
-                                    },
-                                    cx,
-                                )
-                            },
-                        );
-                        outer_cx.send_proxied_message_to(AgentRole, wrapped)
-                    },
-                )
+                .on_receive_message(async move |message: MessageCx, _mcp_cx| {
+                    // Wrap the message in McpOverAcp{Request,Notification} and forward to successor
+                    let wrapped = message.map(
+                        |request, request_cx| {
+                            (
+                                McpOverAcpMessage {
+                                    connection_id: connection_id.clone(),
+                                    message: request,
+                                    meta: None,
+                                },
+                                request_cx,
+                            )
+                        },
+                        |notification| McpOverAcpMessage {
+                            connection_id: connection_id.clone(),
+                            message: notification,
+                            meta: None,
+                        },
+                    );
+                    outer_cx.send_proxied_message_to(AgentRole, wrapped)
+                })
                 .with_spawned(move |mcp_cx| async move {
                     // Messages we pull off this channel were sent from the agent.
                     //
@@ -346,11 +325,11 @@ where
     async fn handle_mcp_over_acp_request(
         &self,
         request: McpOverAcpMessage<UntypedMessage>,
-        request_cx: JrRequestCx<Local, Counterpart, serde_json::Value>,
+        request_cx: JrRequestCx<serde_json::Value>,
     ) -> Result<
         Handled<(
             McpOverAcpMessage<UntypedMessage>,
-            JrRequestCx<Local, Counterpart, serde_json::Value>,
+            JrRequestCx<serde_json::Value>,
         )>,
         crate::Error,
     >
@@ -373,24 +352,14 @@ where
     async fn handle_mcp_over_acp_notification(
         &self,
         notification: McpOverAcpMessage<UntypedMessage>,
-        notification_cx: JrConnectionCx<Local, Counterpart>,
-    ) -> Result<
-        Handled<(
-            McpOverAcpMessage<UntypedMessage>,
-            JrConnectionCx<Local, Counterpart>,
-        )>,
-        crate::Error,
-    > {
+    ) -> Result<Handled<McpOverAcpMessage<UntypedMessage>>, crate::Error> {
         // Check if we have a registered server with the given URL. If not, don't try to handle the request.
         let Some(mut mcp_server_tx) = self.get_connection(&notification.connection_id) else {
-            return Ok(Handled::No((notification, notification_cx)));
+            return Ok(Handled::No((notification)));
         };
 
         mcp_server_tx
-            .send(MessageCx::Notification(
-                notification.message,
-                notification_cx.clone(),
-            ))
+            .send(MessageCx::Notification(notification.message))
             .await
             .map_err(crate::Error::into_internal_error)?;
 
@@ -400,14 +369,7 @@ where
     async fn handle_mcp_disconnect_notification(
         &self,
         successor_notification: McpDisconnectNotification,
-        notification_cx: JrConnectionCx<Local, Counterpart>,
-    ) -> Result<
-        Handled<(
-            McpDisconnectNotification,
-            JrConnectionCx<Local, Counterpart>,
-        )>,
-        crate::Error,
-    >
+    ) -> Result<Handled<McpDisconnectNotification>, crate::Error>
     where
         Local: HasRemoteRole<AgentRole, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
     {
@@ -415,21 +377,15 @@ where
         if self.remove_connection(&successor_notification.connection_id) {
             Ok(Handled::Yes)
         } else {
-            Ok(Handled::No((successor_notification, notification_cx)))
+            Ok(Handled::No((successor_notification)))
         }
     }
 
     async fn handle_new_session_request(
         &self,
         mut request: NewSessionRequest,
-        request_cx: JrRequestCx<Local, Counterpart, NewSessionResponse>,
-    ) -> Result<
-        Handled<(
-            NewSessionRequest,
-            JrRequestCx<Local, Counterpart, NewSessionResponse>,
-        )>,
-        crate::Error,
-    >
+        request_cx: JrRequestCx<NewSessionResponse>,
+    ) -> Result<Handled<(NewSessionRequest, JrRequestCx<NewSessionResponse>)>, crate::Error>
     where
         Local: HasRemoteRole<AgentRole, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
     {
@@ -460,8 +416,9 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageCx<Local, Counterpart>,
-    ) -> Result<Handled<MessageCx<Local, Counterpart>>, crate::Error> {
+        message: MessageCx,
+        connection_cx: JrConnectionCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
         // Hmm, this is a bit wacky:
         //
         // * In a proxy, we expect to receive MCP over ACP notifications wrapped as a "FromSuccessorNotification"
@@ -474,19 +431,17 @@ where
         // but I guess it works.
 
         MatchMessage::new(message)
-            .if_request(|request, request_cx| self.handle_connect_request(request, request_cx))
+            .if_request(|request, request_cx| {
+                self.handle_connect_request(request, request_cx, connection_cx)
+            })
             .await
             .if_request(|request, request_cx| self.handle_mcp_over_acp_request(request, request_cx))
             .await
             .if_request(|request, request_cx| self.handle_new_session_request(request, request_cx))
             .await
-            .if_notification(|notification, notification_cx| {
-                self.handle_mcp_over_acp_notification(notification, notification_cx)
-            })
+            .if_notification(|notification| self.handle_mcp_over_acp_notification(notification))
             .await
-            .if_notification(|notification, notification_cx| {
-                self.handle_mcp_disconnect_notification(notification, notification_cx)
-            })
+            .if_notification(|notification| self.handle_mcp_disconnect_notification(notification))
             .await
             .done()
     }

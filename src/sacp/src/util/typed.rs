@@ -64,19 +64,13 @@ use crate::{
 /// that handler runs and subsequent handlers are skipped. If parsing fails for all types,
 /// the `otherwise` handler receives the original untyped message.
 #[must_use]
-pub struct MatchMessage<Local: JrRole, Counterpart: JrRole>
-where
-    Local: HasCounterpart<Counterpart>,
-{
-    state: Result<Handled<MessageCx<Local, Counterpart>>, crate::Error>,
+pub struct MatchMessage {
+    state: Result<Handled<MessageCx>, crate::Error>,
 }
 
-impl<Local: JrRole, Counterpart: JrRole> MatchMessage<Local, Counterpart>
-where
-    Local: HasCounterpart<Counterpart>,
-{
+impl MatchMessage {
     /// Create a new pattern matcher for the given untyped request message.
-    pub fn new(message: MessageCx<Local, Counterpart>) -> Self {
+    pub fn new(message: MessageCx) -> Self {
         Self {
             state: Ok(Handled::No(message)),
         }
@@ -94,13 +88,10 @@ where
     /// Returns `self` to allow chaining multiple `handle_if` calls.
     pub async fn if_request<Req: JrRequest, H>(
         mut self,
-        op: impl AsyncFnOnce(
-            Req,
-            JrRequestCx<Local, Counterpart, Req::Response>,
-        ) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(Req, JrRequestCx<Req::Response>) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(Req, JrRequestCx<Local, Counterpart, Req::Response>)>,
+        H: crate::IntoHandled<(Req, JrRequestCx<Req::Response>)>,
     {
         if let Ok(Handled::No(MessageCx::Request(untyped_request, untyped_request_cx))) = self.state
         {
@@ -150,28 +141,26 @@ where
     /// Returns `self` to allow chaining multiple `handle_if` calls.
     pub async fn if_notification<N: JrNotification, H>(
         mut self,
-        op: impl AsyncFnOnce(N, JrConnectionCx<Local, Counterpart>) -> Result<H, crate::Error>,
+        op: impl AsyncFnOnce(N) -> Result<H, crate::Error>,
     ) -> Self
     where
-        H: crate::IntoHandled<(N, JrConnectionCx<Local, Counterpart>)>,
+        H: crate::IntoHandled<N>,
     {
-        if let Ok(Handled::No(MessageCx::Notification(untyped_notification, notification_cx))) =
-            self.state
-        {
+        if let Ok(Handled::No(MessageCx::Notification(untyped_notification))) = self.state {
             match N::parse_notification(
                 untyped_notification.method(),
                 untyped_notification.params(),
             ) {
                 Some(Ok(typed_notification)) => {
-                    match op(typed_notification, notification_cx.clone()).await {
+                    match op(typed_notification).await {
                         Ok(result) => match result.into_handled() {
                             Handled::Yes => self.state = Ok(Handled::Yes),
-                            Handled::No((notification, cx)) => {
+                            Handled::No(notification) => {
                                 // Handler returned the notification back, convert to untyped
                                 match notification.to_untyped_message() {
                                     Ok(untyped) => {
                                         self.state =
-                                            Ok(Handled::No(MessageCx::Notification(untyped, cx)));
+                                            Ok(Handled::No(MessageCx::Notification(untyped)));
                                     }
                                     Err(err) => self.state = Err(err),
                                 }
@@ -182,10 +171,7 @@ where
                 }
                 Some(Err(err)) => self.state = Err(err),
                 None => {
-                    self.state = Ok(Handled::No(MessageCx::Notification(
-                        untyped_notification,
-                        notification_cx,
-                    )));
+                    self.state = Ok(Handled::No(MessageCx::Notification(untyped_notification)));
                 }
             }
         }
@@ -193,7 +179,7 @@ where
     }
 
     /// Complete matching, returning `Handled::No` if no match was found.
-    pub fn done(self) -> Result<Handled<MessageCx<Local, Counterpart>>, crate::Error> {
+    pub fn done(self) -> Result<Handled<MessageCx>, crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(Handled::Yes),
             Ok(Handled::No(message)) => Ok(Handled::No(message)),
@@ -208,7 +194,7 @@ where
     /// matching chain and get the final result.
     pub async fn otherwise(
         self,
-        op: impl AsyncFnOnce(MessageCx<Local, Counterpart>) -> Result<(), crate::Error>,
+        op: impl AsyncFnOnce(MessageCx) -> Result<(), crate::Error>,
     ) -> Result<(), crate::Error> {
         match self.state {
             Ok(Handled::Yes) => Ok(()),

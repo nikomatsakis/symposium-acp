@@ -54,8 +54,8 @@ where
     async fn handle_message(
         &mut self,
         message: MessageCx,
-        cx: JrConnectionCx<Local, Counterpart>,
-    ) -> Result<Handled<MessageCx<Local, Counterpart>>, crate::Error> {
+        _cx: JrConnectionCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
         Ok(Handled::No(message))
     }
 }
@@ -119,6 +119,7 @@ where
     async fn handle_message(
         &mut self,
         message_cx: MessageCx,
+        connection_cx: JrConnectionCx<Local, Counterpart>,
     ) -> Result<Handled<MessageCx>, crate::Error> {
         match message_cx {
             MessageCx::Request(message, request_cx) => {
@@ -131,7 +132,7 @@ where
                     Some(Ok(req)) => {
                         tracing::trace!(?req, "RequestHandler::handle_request: parse completed");
                         let typed_request_cx = request_cx.cast();
-                        let result = (self.handler)(req, typed_request_cx).await?;
+                        let result = (self.handler)(req, typed_request_cx, connection_cx).await?;
                         match result.into_handled() {
                             Handled::Yes => Ok(Handled::Yes),
                             Handled::No((request, request_cx)) => {
@@ -216,10 +217,11 @@ where
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageCx<Local, Counterpart>,
-    ) -> Result<Handled<MessageCx<Local, Counterpart>>, crate::Error> {
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
         match message_cx {
-            MessageCx::Notification(message, cx) => {
+            MessageCx::Notification(message) => {
                 tracing::debug!(
                     request_type = std::any::type_name::<Notif>(),
                     message = ?message,
@@ -231,13 +233,13 @@ where
                             ?notif,
                             "NotificationHandler::handle_notification: parse completed"
                         );
-                        let result = (self.handler)(notif, cx.clone()).await?;
+                        let result = (self.handler)(notif, connection_cx).await?;
                         match result.into_handled() {
                             Handled::Yes => Ok(Handled::Yes),
-                            Handled::No((notification, cx)) => {
+                            Handled::No((notification, _cx)) => {
                                 // Handler returned the notification back, convert to untyped
                                 let untyped = notification.to_untyped_message()?;
-                                Ok(Handled::No(MessageCx::Notification(untyped, cx)))
+                                Ok(Handled::No(MessageCx::Notification(untyped)))
                             }
                         }
                     }
@@ -250,7 +252,7 @@ where
                     }
                     None => {
                         tracing::trace!("NotificationHandler::handle_notification: parse failed");
-                        Ok(Handled::No(MessageCx::Notification(message, cx)))
+                        Ok(Handled::No(MessageCx::Notification(message)))
                     }
                 }
             }
@@ -285,8 +287,11 @@ impl<
 > MessageHandler<Local, Remote, Req, Notif, F>
 where
     Local: JrRole + HasRemoteRole<Remote, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
-    F: AsyncFnMut(MessageCx<Local, Counterpart, Req, Notif>) -> Result<T, crate::Error>,
-    T: IntoHandled<MessageCx<Local, Counterpart, Req, Notif>>,
+    F: AsyncFnMut(
+        MessageCx<Req, Notif>,
+        JrConnectionCx<Local, Counterpart>,
+    ) -> Result<T, crate::Error>,
+    T: IntoHandled<MessageCx<Req, Notif>>,
 {
     /// Creates a new message handler
     pub fn new(local: Local, remote: Remote, handler: F) -> Self {
@@ -320,8 +325,11 @@ impl<
 > JrMessageHandler for MessageHandler<Local, Remote, Req, Notif, F>
 where
     Local: JrRole + HasRemoteRole<Remote, Counterpart = Counterpart> + HasCounterpart<Counterpart>,
-    F: AsyncFnMut(MessageCx<Local, Counterpart, Req, Notif>) -> Result<T, crate::Error>,
-    T: IntoHandled<MessageCx<Local, Counterpart, Req, Notif>>,
+    F: AsyncFnMut(
+        MessageCx<Req, Notif>,
+        JrConnectionCx<Local, Counterpart>,
+    ) -> Result<T, crate::Error>,
+    T: IntoHandled<MessageCx<Req, Notif>>,
 {
     type Local = Local;
     type Remote = Remote;
@@ -337,8 +345,9 @@ where
 
     async fn handle_message(
         &mut self,
-        message_cx: MessageCx<Local, Counterpart>,
-    ) -> Result<Handled<MessageCx<Local, Counterpart>>, crate::Error> {
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<Local, Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
         match message_cx {
             MessageCx::Request(message, request_cx) => {
                 tracing::debug!(
@@ -350,7 +359,7 @@ where
                     Some(Ok(req)) => {
                         tracing::trace!(?req, "MessageHandler::handle_request: parse completed");
                         let typed_message = MessageCx::Request(req, request_cx.cast());
-                        let result = (self.handler)(typed_message).await?;
+                        let result = (self.handler)(typed_message, connection_cx).await?;
                         match result.into_handled() {
                             Handled::Yes => Ok(Handled::Yes),
                             Handled::No(MessageCx::Request(request, request_cx)) => {
@@ -376,7 +385,7 @@ where
                 }
             }
 
-            MessageCx::Notification(message, cx) => {
+            MessageCx::Notification(message) => {
                 tracing::debug!(
                     notification_type = std::any::type_name::<Notif>(),
                     message = ?message,
@@ -388,13 +397,13 @@ where
                             ?notif,
                             "MessageHandler::handle_notification: parse completed"
                         );
-                        let typed_message = MessageCx::Notification(notif, cx);
-                        let result = (self.handler)(typed_message).await?;
+                        let typed_message = MessageCx::Notification(notif);
+                        let result = (self.handler)(typed_message, connection_cx).await?;
                         match result.into_handled() {
                             Handled::Yes => Ok(Handled::Yes),
-                            Handled::No(MessageCx::Notification(notification, cx)) => {
+                            Handled::No(MessageCx::Notification(notification)) => {
                                 let untyped = notification.to_untyped_message()?;
-                                Ok(Handled::No(MessageCx::Notification(untyped, cx)))
+                                Ok(Handled::No(MessageCx::Notification(untyped)))
                             }
                             Handled::No(MessageCx::Request(..)) => {
                                 unreachable!("Notification handler returned request")
@@ -407,7 +416,7 @@ where
                     }
                     None => {
                         tracing::trace!("MessageHandler::handle_notification: parse failed");
-                        Ok(Handled::No(MessageCx::Notification(message, cx)))
+                        Ok(Handled::No(MessageCx::Notification(message)))
                     }
                 }
             }
@@ -443,16 +452,17 @@ impl<H: JrMessageHandler> JrMessageHandler for NamedHandler<H> {
 
     async fn handle_message(
         &mut self,
-        message: MessageCx<H::Local, H::Counterpart>,
-    ) -> Result<Handled<MessageCx<H::Local, H::Counterpart>>, crate::Error> {
+        message: MessageCx,
+        connection_cx: JrConnectionCx<H::Local, H::Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
         if let Some(name) = &self.name {
             crate::util::instrumented_with_connection_name(
                 name.clone(),
-                self.handler.handle_message(message),
+                self.handler.handle_message(message, connection_cx),
             )
             .await
         } else {
-            self.handler.handle_message(message).await
+            self.handler.handle_message(message, connection_cx).await
         }
     }
 }
@@ -493,11 +503,16 @@ where
 
     async fn handle_message(
         &mut self,
-        message: MessageCx<H1::Local, H1::Counterpart>,
-    ) -> Result<Handled<MessageCx<H1::Local, H1::Counterpart>>, crate::Error> {
-        match self.handler1.handle_message(message).await? {
+        message: MessageCx,
+        connection_cx: JrConnectionCx<H1::Local, H1::Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
+        match self
+            .handler1
+            .handle_message(message, connection_cx.clone())
+            .await?
+        {
             Handled::Yes => Ok(Handled::Yes),
-            Handled::No(message) => self.handler2.handle_message(message).await,
+            Handled::No(message) => self.handler2.handle_message(message, connection_cx).await,
         }
     }
 }
@@ -531,8 +546,9 @@ impl<H: JrMessageHandler> JrMessageHandler for AdaptRole<H> {
 
     async fn handle_message(
         &mut self,
-        message: MessageCx<H::Local, H::Counterpart>,
-    ) -> Result<Handled<MessageCx<H::Local, H::Counterpart>>, crate::Error> {
+        message: MessageCx,
+        connection_cx: JrConnectionCx<H1::Local, H1::Counterpart>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
         <H::Local>::remote_style(H::Remote::default())
             .handle_incoming_message(message, &mut self.handler)
             .await

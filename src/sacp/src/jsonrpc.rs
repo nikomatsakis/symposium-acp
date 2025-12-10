@@ -112,15 +112,9 @@ pub trait JrMessageHandlerSend: Send {
     /// (and return cx) should be used from that point forward.
     fn handle_message(
         &mut self,
-        message: MessageCx<Self::Local, <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart>,
-    ) -> impl Future<
-        Output = Result<
-            Handled<
-                MessageCx<Self::Local, <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart>,
-            >,
-            crate::Error,
-        >,
-    > + Send;
+        message: MessageCx,
+        cx: JrConnectionCx<Self::Local, <Self::Local as HasRemoteRole<Self::Remote>>::Counterpart>,
+    ) -> impl Future<Output = Result<Handled<MessageCx>, crate::Error>> + Send;
 
     /// Describe this handler chain.
     fn describe_chain(&self) -> impl std::fmt::Debug;
@@ -576,8 +570,12 @@ where
     where
         Req: JrRequest,
         Notif: JrNotification,
-        F: AsyncFnMut(MessageCx<H::Local, H::Remote, Req, Notif>) -> Result<T, crate::Error> + Send,
-        T: IntoHandled<MessageCx<H::Local, H::Remote, Req, Notif>>,
+        F: AsyncFnMut(
+                MessageCx<Req, Notif>,
+                JrConnectionCx<H::Local, H::Remote>,
+            ) -> Result<T, crate::Error>
+            + Send,
+        T: IntoHandled<MessageCx<Req, Notif>>,
     {
         self.with_handler(MessageHandler::new(
             <H::Local>::default(),
@@ -748,10 +746,11 @@ where
         Req: JrRequest,
         F: AsyncFnMut(
                 Req,
-                JrRequestCx<H::Local, H::Remote, Req::Response>,
+                JrRequestCx<Req::Response>,
+                JrConnectionCx<H::Local, H::Remote>,
             ) -> Result<T, crate::Error>
             + Send,
-        T: IntoHandled<(Req, JrRequestCx<H::Local, H::Remote, Req::Response>)>,
+        T: IntoHandled<(Req, JrRequestCx<Req::Response>)>,
     {
         self.with_handler(AdaptRole::new(RequestHandler::new(
             <H::Local>::default(),
