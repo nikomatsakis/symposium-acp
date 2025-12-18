@@ -202,7 +202,7 @@ pub use jsonrpc::{
     ByteStreams, Channel, Handled, IntoHandled, JrConnection, JrConnectionBuilder, JrConnectionCx,
     JrMessage, JrMessageHandler, JrMessageHandlerSend, JrNotification, JrRequest, JrRequestCx,
     JrResponse, JrResponsePayload, Lines, MessageCx, NullHandler, UntypedMessage,
-    responder::{ChainResponder, JrResponder, NullResponder},
+    responder::{ChainResponder, JrResponder, NullResponder, AssertSend},
 };
 
 pub use role::{

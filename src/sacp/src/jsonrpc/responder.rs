@@ -6,6 +6,8 @@
 
 use std::future::Future;
 
+use futures::future::BoxFuture;
+
 use crate::{JrConnectionCx, role::JrRole};
 
 /// A responder runs background tasks alongside a connection.
@@ -16,6 +18,59 @@ use crate::{JrConnectionCx, role::JrRole};
 pub trait JrResponder<Role: JrRole> {
     /// Run this responder to completion.
     async fn run(self, cx: JrConnectionCx<Role>) -> Result<(), crate::Error>;
+
+    /// Hacky method that asserts that the [`JrResponder::run`] method is `Send`.
+    /// The argument `run` should be `JrResponder::run`.
+    /// This is a workaround sometimes required until [#109417](https://github.com/rust-lang/rust/issues/109417)
+    /// is stabilized.
+    fn assert_send<RunFuture>(self, run: impl Fn(Self, JrConnectionCx<Role>) -> RunFuture + Send + 'static) -> AssertSend<Role, Self>
+    where 
+        Self: Sized,
+        RunFuture: Future<Output = Result<(), crate::Error>> + Send + 'static,
+    {
+        AssertSend::new(
+            Role::default(),
+            self,
+            run
+        )
+    }
+}
+
+/// Hacky struct that asserts that the [`Responder::run`] method is `Send`.
+/// Produced by [`Responder::assert_send`].
+pub struct AssertSend<Role: JrRole, Responder> {
+    #[expect(dead_code)]
+    role: Role,
+    responder: Responder,
+    run: Box<dyn Fn(Responder, JrConnectionCx<Role>) -> BoxFuture<'static, Result<(), crate::Error>> + Send>,
+}
+
+impl<Role, Responder> AssertSend<Role, Responder>
+where 
+    Role: JrRole,
+    Responder: JrResponder<Role>,
+{
+    /// Create a new `AssertSend` wrapper with `run` serving as evidence that a send future can be produced.
+    fn new<RunFuture>(role: Role, responder: Responder, run: impl Fn(Responder, JrConnectionCx<Role>) -> RunFuture + Send + 'static) -> Self
+    where 
+        RunFuture: Future<Output = Result<(), crate::Error>> + Send + 'static,
+    {
+        Self {
+            role,
+            responder,
+            run: Box::new(move |responder, cx| Box::pin(run(responder, cx))),
+        }
+    }
+}
+
+impl<Role, Responder> JrResponder<Role> for AssertSend<Role, Responder>
+where 
+    Role: JrRole,
+    Responder: JrResponder<Role>,
+{
+    async fn run(self, cx: JrConnectionCx<Role>) -> Result<(), crate::Error> {
+        (self.run)(self.responder, cx).await
+    }
 }
 
 /// A no-op responder that completes immediately.

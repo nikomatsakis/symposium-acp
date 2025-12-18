@@ -9,6 +9,7 @@
 //! 6. We verify the session_ids match
 
 use sacp::Component;
+use sacp::NullResponder;
 use sacp::ProxyToConductor;
 use sacp::mcp_server::McpServer;
 use sacp_conductor::Conductor;
@@ -48,10 +49,10 @@ fn create_echo_proxy() -> Result<sacp::DynComponent, sacp::Error> {
 }
 
 struct ProxyWithEchoServer<R: sacp::JrResponder<ProxyToConductor>> {
-    mcp_server: McpServer<ProxyToConductor, R>,
+    mcp_server: McpServer<ProxyToConductor, NullResponder>,
 }
 
-impl<R: sacp::JrResponder<ProxyToConductor> + 'static> Component for ProxyWithEchoServer<R> {
+impl<R: sacp::JrResponderSend<ProxyToConductor> + 'static + Send> Component for ProxyWithEchoServer<R> {
     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
         ProxyToConductor::builder()
             .name("echo-proxy")

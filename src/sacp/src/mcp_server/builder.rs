@@ -19,12 +19,10 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use super::{McpContext, McpTool};
 use crate::{
-    Agent, ByteStreams, Component, DynComponent, HasEndpoint, JrRole,
-    jsonrpc::responder::{ChainResponder, JrResponder, NullResponder},
-    mcp_server::{
+    Agent, AssertSend, ByteStreams, Component, DynComponent, HasEndpoint, JrConnectionCx, JrRole, jsonrpc::responder::{ChainResponder, JrResponder, NullResponder}, mcp_server::{
         McpServer, McpServerConnect,
         responder::{ToolCall, ToolFnResponder},
-    },
+    }
 };
 
 /// Builder for creating MCP servers with tools.
@@ -131,7 +129,7 @@ where
     ///         async |input: GreetInput, _cx| Ok(format!("Hello, {}!", input.name)),
     ///     )
     /// ```
-    pub fn tool_fn<P, R, F, Fut>(
+    pub fn tool_fn<P, R, F>(
         self,
         name: impl ToString,
         description: impl ToString,
@@ -194,6 +192,27 @@ where
                 call_tx,
             },
             ToolFnResponder { func, call_rx },
+        )
+    }
+
+        /// Create an MCP server from this builder.
+    ///
+    /// This builder can be attached to new sessions (see [`SessionBuilder::with_mcp_server`])
+    /// or served up as part of a proxy (see [`JrConnectionBuilder::with_mcp_server`]).
+    pub fn assert_send<F>(
+        self,
+        responder_run: impl Fn(Responder, JrConnectionCx<Role>) -> F + Send + 'static,
+    ) -> McpServer<Role, AssertSend<Role, Responder>>
+    where 
+        F: Future<Output = Result<(), crate::Error>> + Send + 'static,
+    {
+        McpServer::new(
+            McpServerBuilt {
+                role: self.role,
+                name: self.name,
+                data: Arc::new(self.data),
+            },
+            self.responder.assert_send(responder_run),
         )
     }
 
