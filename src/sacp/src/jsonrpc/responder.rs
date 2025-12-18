@@ -12,10 +12,10 @@ use crate::{JrConnectionCx, role::JrRole};
 ///
 /// Responders are composed using [`ChainResponder`] and run in parallel
 /// when the connection is active.
-pub trait JrResponder<Role: JrRole>: Send {
+#[expect(async_fn_in_trait)]
+pub trait JrResponder<Role: JrRole> {
     /// Run this responder to completion.
-    fn run(self, cx: JrConnectionCx<Role>)
-    -> impl Future<Output = Result<(), crate::Error>> + Send;
+    async fn run(self, cx: JrConnectionCx<Role>) -> Result<(), crate::Error>;
 }
 
 /// A no-op responder that completes immediately.

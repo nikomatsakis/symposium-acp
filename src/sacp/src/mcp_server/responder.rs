@@ -1,7 +1,5 @@
 //! MCP-specific responder types.
 
-use std::future::Future;
-
 use futures::{StreamExt, channel::mpsc};
 
 use crate::{JrConnectionCx, JrRole, jsonrpc::responder::JrResponder, mcp_server::McpContext};
@@ -20,13 +18,12 @@ pub struct ToolFnResponder<F, P, R, Role: JrRole> {
     pub(crate) call_rx: mpsc::Receiver<ToolCall<P, R, Role>>,
 }
 
-impl<F, P, R, Role, Fut> JrResponder<Role> for ToolFnResponder<F, P, R, Role>
+impl<F, P, R, Role> JrResponder<Role> for ToolFnResponder<F, P, R, Role>
 where
     Role: JrRole,
     P: Send,
     R: Send,
-    F: FnMut(P, McpContext<Role>) -> Fut + Send,
-    Fut: Future<Output = Result<R, crate::Error>> + Send,
+    F: AsyncFnMut(P, McpContext<Role>) -> Result<R, crate::Error>,
 {
     async fn run(mut self, _cx: JrConnectionCx<Role>) -> Result<(), crate::Error> {
         while let Some(ToolCall {

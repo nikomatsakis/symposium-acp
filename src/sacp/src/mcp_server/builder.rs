@@ -140,8 +140,7 @@ where
     where
         P: JsonSchema + DeserializeOwned + 'static + Send,
         R: JsonSchema + Serialize + 'static + Send,
-        F: FnMut(P, McpContext<Role>) -> Fut + Send + Sync,
-        Fut: std::future::Future<Output = Result<R, crate::Error>> + Send,
+        F: AsyncFnMut(P, McpContext<Role>) -> Result<R, crate::Error>,
     {
         struct ToolFnTool<P, R, Role: JrRole> {
             name: String,
