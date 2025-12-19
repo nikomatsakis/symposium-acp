@@ -23,10 +23,10 @@ pub trait JrResponder<Role: JrRole> {
     /// The argument `run` should be `JrResponder::run`.
     /// This is a workaround sometimes required until [#109417](https://github.com/rust-lang/rust/issues/109417)
     /// is stabilized.
-    fn assert_send<RunFuture>(self, run: impl Fn(Self, JrConnectionCx<Role>) -> RunFuture + Send + 'static) -> AssertSend<Role, Self>
+    fn assert_send<'scope, RunFuture>(self, run: impl Fn(Self, JrConnectionCx<Role>) -> RunFuture + Send + 'scope) -> AssertSend<'scope, Role, Self>
     where 
         Self: Sized,
-        RunFuture: Future<Output = Result<(), crate::Error>> + Send + 'static,
+        RunFuture: Future<Output = Result<(), crate::Error>> + Send + 'scope,
     {
         AssertSend::new(
             Role::default(),
@@ -38,22 +38,22 @@ pub trait JrResponder<Role: JrRole> {
 
 /// Hacky struct that asserts that the [`Responder::run`] method is `Send`.
 /// Produced by [`Responder::assert_send`].
-pub struct AssertSend<Role: JrRole, Responder> {
+pub struct AssertSend<'scope, Role: JrRole, Responder> {
     #[expect(dead_code)]
     role: Role,
     responder: Responder,
-    run: Box<dyn Fn(Responder, JrConnectionCx<Role>) -> BoxFuture<'static, Result<(), crate::Error>> + Send>,
+    run: Box<dyn Fn(Responder, JrConnectionCx<Role>) -> BoxFuture<'scope, Result<(), crate::Error>> + Send + 'scope>,
 }
 
-impl<Role, Responder> AssertSend<Role, Responder>
+impl<'scope, Role, Responder> AssertSend<'scope, Role, Responder>
 where 
     Role: JrRole,
     Responder: JrResponder<Role>,
 {
     /// Create a new `AssertSend` wrapper with `run` serving as evidence that a send future can be produced.
-    fn new<RunFuture>(role: Role, responder: Responder, run: impl Fn(Responder, JrConnectionCx<Role>) -> RunFuture + Send + 'static) -> Self
+    fn new<RunFuture>(role: Role, responder: Responder, run: impl Fn(Responder, JrConnectionCx<Role>) -> RunFuture + Send + 'scope) -> Self
     where 
-        RunFuture: Future<Output = Result<(), crate::Error>> + Send + 'static,
+        RunFuture: Future<Output = Result<(), crate::Error>> + Send + 'scope,
     {
         Self {
             role,
@@ -63,7 +63,7 @@ where
     }
 }
 
-impl<Role, Responder> JrResponder<Role> for AssertSend<Role, Responder>
+impl<Role, Responder> JrResponder<Role> for AssertSend<'_, Role, Responder>
 where 
     Role: JrRole,
     Responder: JrResponder<Role>,

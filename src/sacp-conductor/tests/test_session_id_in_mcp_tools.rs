@@ -8,8 +8,9 @@
 //! 5. The tool returns the session_id in its response
 //! 6. We verify the session_ids match
 
+use sacp::AssertSend;
 use sacp::Component;
-use sacp::NullResponder;
+use sacp::JrResponder;
 use sacp::ProxyToConductor;
 use sacp::mcp_server::McpServer;
 use sacp_conductor::Conductor;
@@ -42,17 +43,17 @@ fn create_echo_proxy() -> Result<sacp::DynComponent, sacp::Error> {
                 })
             },
         )
-        .build();
+        .build_send(JrResponder::run);
 
     // Create proxy component
     Ok(sacp::DynComponent::new(ProxyWithEchoServer { mcp_server }))
 }
 
 struct ProxyWithEchoServer<R: sacp::JrResponder<ProxyToConductor>> {
-    mcp_server: McpServer<ProxyToConductor, NullResponder>,
+    mcp_server: McpServer<ProxyToConductor, AssertSend<'static, ProxyToConductor, R>>,
 }
 
-impl<R: sacp::JrResponderSend<ProxyToConductor> + 'static + Send> Component for ProxyWithEchoServer<R> {
+impl<R: sacp::JrResponder<ProxyToConductor> + 'static + Send> Component for ProxyWithEchoServer<R> {
     async fn serve(self, client: impl Component) -> Result<(), sacp::Error> {
         ProxyToConductor::builder()
             .name("echo-proxy")

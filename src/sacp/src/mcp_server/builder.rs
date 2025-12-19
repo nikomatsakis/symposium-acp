@@ -199,12 +199,12 @@ where
     ///
     /// This builder can be attached to new sessions (see [`SessionBuilder::with_mcp_server`])
     /// or served up as part of a proxy (see [`JrConnectionBuilder::with_mcp_server`]).
-    pub fn assert_send<F>(
+    pub fn build_send<'scope, F>(
         self,
-        responder_run: impl Fn(Responder, JrConnectionCx<Role>) -> F + Send + 'static,
-    ) -> McpServer<Role, AssertSend<Role, Responder>>
+        responder_run: impl Fn(Responder, JrConnectionCx<Role>) -> F + Send + 'scope,
+    ) -> McpServer<Role, AssertSend<'scope, Role, Responder>>
     where 
-        F: Future<Output = Result<(), crate::Error>> + Send + 'static,
+        F: Future<Output = Result<(), crate::Error>> + Send + 'scope,
     {
         McpServer::new(
             McpServerBuilt {
