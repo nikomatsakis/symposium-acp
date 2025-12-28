@@ -29,6 +29,7 @@ use crate::jsonrpc::dynamic_handler::DynamicHandlerMessage;
 pub use crate::jsonrpc::handlers::NullHandler;
 use crate::jsonrpc::handlers::{ChainedHandler, NamedHandler};
 use crate::jsonrpc::handlers::{MessageHandler, NotificationHandler, RequestHandler};
+use crate::jsonrpc::handlers::{MessageHandlerSync, NotificationHandlerSync, RequestHandlerSync};
 use crate::jsonrpc::outgoing_actor::{OutgoingMessageTx, send_raw_message};
 use crate::jsonrpc::responder::SpawnedResponder;
 use crate::jsonrpc::responder::{ChainResponder, JrResponder, NullResponder};
@@ -947,6 +948,155 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
             op,
             to_future_hack,
         ))
+    }
+
+    // =========================================================================
+    // Sync handler registration methods
+    // =========================================================================
+    //
+    // These methods register synchronous handlers that use `FnMut` closures
+    // instead of async closures. They're useful for routing/filtering use cases
+    // where the handler makes a synchronous decision about whether to handle
+    // the message (e.g., checking a connection ID or URL).
+
+    /// Register a synchronous handler for JSON-RPC requests of type `Req`.
+    ///
+    /// Unlike [`on_receive_request`](Self::on_receive_request), this uses a synchronous
+    /// closure. This is useful for routing decisions that don't require async work,
+    /// such as checking if a request belongs to a particular session or connection.
+    ///
+    /// The handler can return `Handled::No` to pass the message to subsequent handlers.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// connection.on_receive_request_sync(|req: MyRequest, request_cx, cx| {
+    ///     if req.session_id != my_session_id {
+    ///         // Not for us, pass it on
+    ///         return Ok(Handled::No { message: (req, request_cx), retry: false });
+    ///     }
+    ///     // Handle the request synchronously (e.g., send to a channel)
+    ///     my_channel.send((req, request_cx))?;
+    ///     Ok(Handled::Yes)
+    /// })
+    /// ```
+    pub fn on_receive_request_sync<Req: JrRequest, F, T>(
+        self,
+        op: F,
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    where
+        H::Link: HasDefaultPeer,
+        F: FnMut(
+                Req,
+                JrRequestCx<Req::Response>,
+                JrConnectionCx<H::Link>,
+            ) -> Result<T, crate::Error>
+            + Send,
+        T: IntoHandled<(Req, JrRequestCx<Req::Response>)>,
+    {
+        self.with_handler(RequestHandlerSync::new(
+            <H::Link as HasDefaultPeer>::DefaultPeer::default(),
+            <H::Link>::default(),
+            op,
+        ))
+    }
+
+    /// Register a synchronous handler for JSON-RPC requests from a specific peer.
+    ///
+    /// This is the sync variant of [`on_receive_request_from`](Self::on_receive_request_from).
+    pub fn on_receive_request_from_sync<Req: JrRequest, Peer: JrPeer, F, T>(
+        self,
+        peer: Peer,
+        op: F,
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    where
+        H::Link: HasPeer<Peer>,
+        F: FnMut(
+                Req,
+                JrRequestCx<Req::Response>,
+                JrConnectionCx<H::Link>,
+            ) -> Result<T, crate::Error>
+            + Send,
+        T: IntoHandled<(Req, JrRequestCx<Req::Response>)>,
+    {
+        self.with_handler(RequestHandlerSync::new(peer, <H::Link>::default(), op))
+    }
+
+    /// Register a synchronous handler for JSON-RPC notifications of type `Notif`.
+    ///
+    /// Unlike [`on_receive_notification`](Self::on_receive_notification), this uses a
+    /// synchronous closure. This is useful for routing decisions that don't require
+    /// async work.
+    ///
+    /// The handler can return `Handled::No` to pass the message to subsequent handlers.
+    pub fn on_receive_notification_sync<Notif: JrNotification, F, T>(
+        self,
+        op: F,
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    where
+        H::Link: HasDefaultPeer,
+        F: FnMut(Notif, JrConnectionCx<H::Link>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<(Notif, JrConnectionCx<H::Link>)>,
+    {
+        self.with_handler(NotificationHandlerSync::new(
+            <H::Link as HasDefaultPeer>::DefaultPeer::default(),
+            <H::Link>::default(),
+            op,
+        ))
+    }
+
+    /// Register a synchronous handler for JSON-RPC notifications from a specific peer.
+    ///
+    /// This is the sync variant of [`on_receive_notification_from`](Self::on_receive_notification_from).
+    pub fn on_receive_notification_from_sync<Notif: JrNotification, Peer: JrPeer, F, T>(
+        self,
+        peer: Peer,
+        op: F,
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    where
+        H::Link: HasPeer<Peer>,
+        F: FnMut(Notif, JrConnectionCx<H::Link>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<(Notif, JrConnectionCx<H::Link>)>,
+    {
+        self.with_handler(NotificationHandlerSync::new(peer, <H::Link>::default(), op))
+    }
+
+    /// Register a synchronous handler for both requests and notifications.
+    ///
+    /// Unlike [`on_receive_message`](Self::on_receive_message), this uses a synchronous
+    /// closure. This is useful for routing decisions that don't require async work.
+    ///
+    /// The handler can return `Handled::No` to pass the message to subsequent handlers.
+    pub fn on_receive_message_sync<Req: JrRequest, Notif: JrNotification, F, T>(
+        self,
+        op: F,
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    where
+        H::Link: HasDefaultPeer,
+        F: FnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<MessageCx<Req, Notif>>,
+    {
+        self.with_handler(MessageHandlerSync::new(
+            <H::Link as HasDefaultPeer>::DefaultPeer::default(),
+            <H::Link>::default(),
+            op,
+        ))
+    }
+
+    /// Register a synchronous handler for messages from a specific peer.
+    ///
+    /// This is the sync variant of [`on_receive_message_from`](Self::on_receive_message_from).
+    pub fn on_receive_message_from_sync<Req: JrRequest, Notif: JrNotification, Peer: JrPeer, F, T>(
+        self,
+        peer: Peer,
+        op: F,
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    where
+        H::Link: HasPeer<Peer>,
+        F: FnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<T, crate::Error> + Send,
+        T: IntoHandled<MessageCx<Req, Notif>>,
+    {
+        self.with_handler(MessageHandlerSync::new(peer, <H::Link>::default(), op))
     }
 
     /// In a proxy, add this MCP server to new sessions passing through the proxy.

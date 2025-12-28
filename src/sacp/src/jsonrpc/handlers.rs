@@ -397,6 +397,311 @@ where
     }
 }
 
+// =============================================================================
+// Sync Handler Types
+// =============================================================================
+//
+// These handlers use synchronous closures (FnMut) instead of async closures.
+// They're useful for routing/filtering use cases where the decision to handle
+// a message is based on runtime data (e.g., checking a connection ID) rather
+// than expensive async operations.
+
+/// Sync handler for typed request messages.
+///
+/// Unlike [`RequestHandler`], this uses a synchronous closure. This is useful
+/// for routing decisions that don't require async work.
+pub struct RequestHandlerSync<Link: JrLink, Peer: JrPeer, Req: JrRequest = UntypedMessage, F = ()> {
+    handler: F,
+    phantom: PhantomData<fn(Link, Peer, Req)>,
+}
+
+impl<Link: JrLink, Peer: JrPeer, Req: JrRequest, F> RequestHandlerSync<Link, Peer, Req, F> {
+    /// Creates a new sync request handler
+    pub fn new(_peer: Peer, _link: Link, handler: F) -> Self {
+        Self {
+            handler,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<Link: JrLink, Peer: JrPeer, Req, F, T> JrMessageHandler
+    for RequestHandlerSync<Link, Peer, Req, F>
+where
+    Link: HasPeer<Peer>,
+    Req: JrRequest,
+    F: FnMut(Req, JrRequestCx<Req::Response>, JrConnectionCx<Link>) -> Result<T, crate::Error>
+        + Send,
+    T: crate::IntoHandled<(Req, JrRequestCx<Req::Response>)>,
+{
+    type Link = Link;
+
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        format!("{}(sync)", std::any::type_name::<Req>())
+    }
+
+    async fn handle_message(
+        &mut self,
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<Link>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
+        let remote_style = Link::remote_style(Peer::default());
+        remote_style.handle_incoming_message_sync(
+            message_cx,
+            connection_cx,
+            |message_cx, connection_cx| match message_cx {
+                MessageCx::Request(message, request_cx) => {
+                    tracing::debug!(
+                        request_type = std::any::type_name::<Req>(),
+                        message = ?message,
+                        "RequestHandlerSync::handle_request"
+                    );
+                    match Req::parse_message(&message.method, &message.params) {
+                        Some(Ok(req)) => {
+                            tracing::trace!(
+                                ?req,
+                                "RequestHandlerSync::handle_request: parse completed"
+                            );
+                            let typed_request_cx = request_cx.cast();
+                            let result = (self.handler)(req, typed_request_cx, connection_cx)?;
+                            match result.into_handled() {
+                                Handled::Yes => Ok(Handled::Yes),
+                                Handled::No {
+                                    message: (request, request_cx),
+                                    retry,
+                                } => {
+                                    let untyped = request.to_untyped_message()?;
+                                    Ok(Handled::No {
+                                        message: MessageCx::Request(
+                                            untyped,
+                                            request_cx.erase_to_json(),
+                                        ),
+                                        retry,
+                                    })
+                                }
+                            }
+                        }
+                        Some(Err(err)) => {
+                            tracing::trace!(
+                                ?err,
+                                "RequestHandlerSync::handle_request: parse errored"
+                            );
+                            Err(err)
+                        }
+                        None => {
+                            tracing::trace!("RequestHandlerSync::handle_request: parse failed");
+                            Ok(Handled::No {
+                                message: MessageCx::Request(message, request_cx),
+                                retry: false,
+                            })
+                        }
+                    }
+                }
+
+                MessageCx::Notification(..) => Ok(Handled::No {
+                    message: message_cx,
+                    retry: false,
+                }),
+            },
+        )
+    }
+}
+
+/// Sync handler for typed notification messages.
+///
+/// Unlike [`NotificationHandler`], this uses a synchronous closure. This is useful
+/// for routing decisions that don't require async work.
+pub struct NotificationHandlerSync<
+    Link: JrLink,
+    Peer: JrPeer,
+    Notif: JrNotification = UntypedMessage,
+    F = (),
+> {
+    handler: F,
+    phantom: PhantomData<fn(Link, Peer, Notif)>,
+}
+
+impl<Link: JrLink, Peer: JrPeer, Notif: JrNotification, F>
+    NotificationHandlerSync<Link, Peer, Notif, F>
+{
+    /// Creates a new sync notification handler
+    pub fn new(_peer: Peer, _link: Link, handler: F) -> Self {
+        Self {
+            handler,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<Link: JrLink, Peer: JrPeer, Notif, F, T> JrMessageHandler
+    for NotificationHandlerSync<Link, Peer, Notif, F>
+where
+    Link: HasPeer<Peer>,
+    Notif: JrNotification,
+    F: FnMut(Notif, JrConnectionCx<Link>) -> Result<T, crate::Error> + Send,
+    T: crate::IntoHandled<(Notif, JrConnectionCx<Link>)>,
+{
+    type Link = Link;
+
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        format!("{}(sync)", std::any::type_name::<Notif>())
+    }
+
+    async fn handle_message(
+        &mut self,
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<Link>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
+        let remote_style = Link::remote_style(Peer::default());
+        remote_style.handle_incoming_message_sync(
+            message_cx,
+            connection_cx,
+            |message_cx, connection_cx| match message_cx {
+                MessageCx::Notification(message) => {
+                    tracing::debug!(
+                        notification_type = std::any::type_name::<Notif>(),
+                        message = ?message,
+                        "NotificationHandlerSync::handle_notification"
+                    );
+                    match Notif::parse_message(&message.method, &message.params) {
+                        Some(Ok(notif)) => {
+                            tracing::trace!(
+                                ?notif,
+                                "NotificationHandlerSync::handle_notification: parse completed"
+                            );
+                            let result = (self.handler)(notif, connection_cx)?;
+                            match result.into_handled() {
+                                Handled::Yes => Ok(Handled::Yes),
+                                Handled::No {
+                                    message: (notification, _cx),
+                                    retry,
+                                } => {
+                                    let untyped = notification.to_untyped_message()?;
+                                    Ok(Handled::No {
+                                        message: MessageCx::Notification(untyped),
+                                        retry,
+                                    })
+                                }
+                            }
+                        }
+                        Some(Err(err)) => {
+                            tracing::trace!(
+                                ?err,
+                                "NotificationHandlerSync::handle_notification: parse errored"
+                            );
+                            Err(err)
+                        }
+                        None => {
+                            tracing::trace!(
+                                "NotificationHandlerSync::handle_notification: parse failed"
+                            );
+                            Ok(Handled::No {
+                                message: MessageCx::Notification(message),
+                                retry: false,
+                            })
+                        }
+                    }
+                }
+
+                MessageCx::Request(..) => Ok(Handled::No {
+                    message: message_cx,
+                    retry: false,
+                }),
+            },
+        )
+    }
+}
+
+/// Sync handler that handles both requests and notifications of specific types.
+///
+/// Unlike [`MessageHandler`], this uses a synchronous closure. This is useful
+/// for routing decisions that don't require async work.
+pub struct MessageHandlerSync<
+    Link: JrLink,
+    Peer: JrPeer,
+    Req: JrRequest = UntypedMessage,
+    Notif: JrNotification = UntypedMessage,
+    F = (),
+> {
+    handler: F,
+    phantom: PhantomData<fn(Link, Peer, Req, Notif)>,
+}
+
+impl<Link: JrLink, Peer: JrPeer, Req: JrRequest, Notif: JrNotification, F>
+    MessageHandlerSync<Link, Peer, Req, Notif, F>
+{
+    /// Creates a new sync message handler
+    pub fn new(_peer: Peer, _link: Link, handler: F) -> Self {
+        Self {
+            handler,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<Link: JrLink, Peer: JrPeer, Req: JrRequest, Notif: JrNotification, F, T> JrMessageHandler
+    for MessageHandlerSync<Link, Peer, Req, Notif, F>
+where
+    Link: HasPeer<Peer>,
+    F: FnMut(MessageCx<Req, Notif>, JrConnectionCx<Link>) -> Result<T, crate::Error> + Send,
+    T: IntoHandled<MessageCx<Req, Notif>>,
+{
+    type Link = Link;
+
+    fn describe_chain(&self) -> impl std::fmt::Debug {
+        format!(
+            "({}, {})(sync)",
+            std::any::type_name::<Req>(),
+            std::any::type_name::<Notif>()
+        )
+    }
+
+    async fn handle_message(
+        &mut self,
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<Link>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
+        let remote_style = Link::remote_style(Peer::default());
+        remote_style.handle_incoming_message_sync(
+            message_cx,
+            connection_cx,
+            |message_cx, connection_cx| match message_cx.into_typed_message_cx::<Req, Notif>()? {
+                Ok(typed_message_cx) => {
+                    let result = (self.handler)(typed_message_cx, connection_cx)?;
+                    match result.into_handled() {
+                        Handled::Yes => Ok(Handled::Yes),
+                        Handled::No {
+                            message: MessageCx::Request(request, request_cx),
+                            retry,
+                        } => {
+                            let untyped = request.to_untyped_message()?;
+                            Ok(Handled::No {
+                                message: MessageCx::Request(untyped, request_cx.erase_to_json()),
+                                retry,
+                            })
+                        }
+                        Handled::No {
+                            message: MessageCx::Notification(notification),
+                            retry,
+                        } => {
+                            let untyped = notification.to_untyped_message()?;
+                            Ok(Handled::No {
+                                message: MessageCx::Notification(untyped),
+                                retry,
+                            })
+                        }
+                    }
+                }
+
+                Err(message_cx) => Ok(Handled::No {
+                    message: message_cx,
+                    retry: false,
+                }),
+            },
+        )
+    }
+}
+
 /// Wraps a handler with an optional name for tracing/debugging.
 pub struct NamedHandler<H> {
     name: Option<String>,

@@ -715,7 +715,7 @@ where
             "ActiveSessionHandler::handle_message"
         );
         MatchMessageFrom::new(message, &cx)
-            .if_message_from(AgentPeer, async |message| {
+            .if_message_from_sync(AgentPeer, |message| {
                 if let Some(session_id) = message.get_session_id()? {
                     tracing::trace!(
                         message_session_id = ?session_id,
@@ -736,7 +736,6 @@ where
                     retry: false,
                 })
             })
-            .await
             .done()
     }
 

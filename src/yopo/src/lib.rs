@@ -90,16 +90,13 @@ pub async fn prompt_with_callback(
 
     // Run the client
     ClientToAgent::builder()
-        .on_receive_message(
-            async |message: MessageCx<UntypedMessage, UntypedMessage>, _cx| {
-                tracing::trace!("received: {:?}", message.message());
-                Ok(Handled::No {
-                    message,
-                    retry: false,
-                })
-            },
-            sacp::on_receive_message!(),
-        )
+        .on_receive_message_sync(|message: MessageCx<UntypedMessage, UntypedMessage>, _cx| {
+            tracing::trace!("received: {:?}", message.message());
+            Ok(Handled::No {
+                message,
+                retry: false,
+            })
+        })
         .connect_to(component)?
         .run_until(|cx: sacp::JrConnectionCx<ClientToAgent>| async move {
             // Initialize the agent
