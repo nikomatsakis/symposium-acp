@@ -22,7 +22,7 @@ use crate::conductor::{
 pub async fn run_http_listener(
     tcp_listener: TcpListener,
     acp_url: String,
-    mut conductor_tx: mpsc::Sender<ConductorMessage>,
+    mut conductor_tx: mpsc::UnboundedSender<ConductorMessage>,
 ) -> Result<(), sacp::Error> {
     let (to_mcp_client_tx, to_mcp_client_rx) = mpsc::channel(128);
 

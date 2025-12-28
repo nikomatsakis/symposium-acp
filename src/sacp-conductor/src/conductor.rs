@@ -103,7 +103,7 @@
 //!
 //! The closure receives:
 //! - `cx: &JrConnectionCx` - Connection context for spawning components
-//! - `conductor_tx: &mpsc::Sender<ConductorMessage>` - Channel for message routing
+//! - `conductor_tx: &mpsc::UnboundedSender<ConductorMessage>` - Channel for message routing
 //! - `init_req: InitializeRequest` - The Initialize request from the editor
 //!
 //! And returns:
@@ -237,7 +237,7 @@ impl<Link: ConductorLink> Conductor<Link> {
     pub fn into_connection_builder(
         self,
     ) -> JrConnectionBuilder<impl JrMessageHandler<Link = Link>, impl JrResponder<Link>> {
-        let (conductor_tx, conductor_rx) = mpsc::channel(128 /* chosen arbitrarily */);
+        let (conductor_tx, conductor_rx) = mpsc::unbounded();
 
         let responder = ConductorResponder {
             conductor_rx,
@@ -280,29 +280,27 @@ impl<Link: ConductorLink> Conductor<Link> {
             .await
     }
 
-    async fn incoming_message_from_client(
-        conductor_tx: &mut mpsc::Sender<ConductorMessage>,
+    fn incoming_message_from_client(
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         message: MessageCx,
     ) -> Result<(), sacp::Error> {
         conductor_tx
-            .send(ConductorMessage::ClientToAgent {
+            .unbounded_send(ConductorMessage::ClientToAgent {
                 target_component_index: 0,
                 message,
             })
-            .await
             .map_err(sacp::util::internal_error)
     }
 
-    async fn incoming_message_from_agent(
-        conductor_tx: &mut mpsc::Sender<ConductorMessage>,
+    fn incoming_message_from_agent(
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         message: MessageCx,
     ) -> Result<(), sacp::Error> {
         conductor_tx
-            .send(ConductorMessage::AgentToClient {
+            .unbounded_send(ConductorMessage::AgentToClient {
                 source_component_index: SourceComponentIndex::Successor,
                 message,
             })
-            .await
             .map_err(sacp::util::internal_error)
     }
 }
@@ -317,7 +315,7 @@ impl<Link: ConductorLink> Component<Link::Speaks> for Conductor<Link> {
 }
 
 struct ConductorMessageHandler<Link: ConductorLink> {
-    conductor_tx: mpsc::Sender<ConductorMessage>,
+    conductor_tx: mpsc::UnboundedSender<ConductorMessage>,
     link: Link,
 }
 
@@ -329,9 +327,7 @@ impl<Link: ConductorLink> JrMessageHandler for ConductorMessageHandler<Link> {
         message: MessageCx,
         cx: sacp::JrConnectionCx<Link>,
     ) -> Result<sacp::Handled<MessageCx>, sacp::Error> {
-        self.link
-            .handle_message(message, cx, &mut self.conductor_tx)
-            .await
+        self.link.handle_message(message, cx, &self.conductor_tx)
     }
 
     fn describe_chain(&self) -> impl std::fmt::Debug {
@@ -348,9 +344,9 @@ pub struct ConductorResponder<Link>
 where
     Link: ConductorLink,
 {
-    conductor_rx: mpsc::Receiver<ConductorMessage>,
+    conductor_rx: mpsc::UnboundedReceiver<ConductorMessage>,
 
-    conductor_tx: mpsc::Sender<ConductorMessage>,
+    conductor_tx: mpsc::UnboundedSender<ConductorMessage>,
 
     /// Manages the TCP listeners for MCP connections that will be proxied over ACP.
     bridge_listeners: McpBridgeListeners,
@@ -910,45 +906,31 @@ where
                 ConductorToProxy::builder()
                     .name(format!("conductor-to-component({})", component_index))
                     // Intercept messages sent by a proxy component to its successor.
-                    .on_receive_message(
-                        {
-                            let mut conductor_tx = self.conductor_tx.clone();
-                            async move |message_cx: MessageCx<
-                                SuccessorMessage,
-                                SuccessorMessage,
-                            >,
-                                        _cx| {
-                                conductor_tx
-                                    .send(ConductorMessage::ClientToAgent {
-                                        target_component_index: component_index + 1,
-                                        message: message_cx
-                                            .map(|r, cx| (r.message, cx), |n| n.message),
-                                    })
-                                    .await
-                                    .map_err(sacp::util::internal_error)
-                            }
-                        },
-                        sacp::on_receive_message!(),
-                    )
+                    .on_receive_message_sync({
+                        let conductor_tx = self.conductor_tx.clone();
+                        move |message_cx: MessageCx<SuccessorMessage, SuccessorMessage>, _cx| {
+                            conductor_tx
+                                .unbounded_send(ConductorMessage::ClientToAgent {
+                                    target_component_index: component_index + 1,
+                                    message: message_cx.map(|r, cx| (r.message, cx), |n| n.message),
+                                })
+                                .map_err(sacp::util::internal_error)
+                        }
+                    })
                     // Intercept agent-to-client messages from the proxy.
-                    .on_receive_message(
-                        {
-                            let mut conductor_tx = self.conductor_tx.clone();
-                            async move |message_cx: MessageCx<UntypedMessage, UntypedMessage>,
-                                        _cx| {
-                                conductor_tx
-                                    .send(ConductorMessage::AgentToClient {
-                                        source_component_index: SourceComponentIndex::Proxy(
-                                            component_index,
-                                        ),
-                                        message: message_cx,
-                                    })
-                                    .await
-                                    .map_err(sacp::util::internal_error)
-                            }
-                        },
-                        sacp::on_receive_message!(),
-                    )
+                    .on_receive_message_sync({
+                        let conductor_tx = self.conductor_tx.clone();
+                        move |message_cx: MessageCx<UntypedMessage, UntypedMessage>, _cx| {
+                            conductor_tx
+                                .unbounded_send(ConductorMessage::AgentToClient {
+                                    source_component_index: SourceComponentIndex::Proxy(
+                                        component_index,
+                                    ),
+                                    message: message_cx,
+                                })
+                                .map_err(sacp::util::internal_error)
+                        }
+                    })
                     .connect_to(dyn_component)?,
                 |c| Box::pin(c.serve()),
             )?;
@@ -1395,7 +1377,7 @@ trait JrConnectionCxExt<Link: JrLink> {
     fn send_proxied_message_to_via<Peer: JrPeer>(
         &self,
         peer: Peer,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         message: MessageCx,
     ) -> Result<(), sacp::Error>
     where
@@ -1406,7 +1388,7 @@ impl<Link: JrLink> JrConnectionCxExt<Link> for JrConnectionCx<Link> {
     fn send_proxied_message_to_via<Peer: JrPeer>(
         &self,
         peer: Peer,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         message: MessageCx,
     ) -> Result<(), sacp::Error>
     where
@@ -1424,7 +1406,7 @@ impl<Link: JrLink> JrConnectionCxExt<Link> for JrConnectionCx<Link> {
 trait JrRequestCxExt<T: JrResponsePayload> {
     async fn respond_with_result_via(
         self,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         result: Result<T, sacp::Error>,
     ) -> Result<(), sacp::Error>;
 }
@@ -1432,7 +1414,7 @@ trait JrRequestCxExt<T: JrResponsePayload> {
 impl<T: JrResponsePayload> JrRequestCxExt<T> for JrRequestCx<T> {
     async fn respond_with_result_via(
         self,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         result: Result<T, sacp::Error>,
     ) -> Result<(), sacp::Error> {
         let result = result.and_then(|response| response.into_json(self.method()));
@@ -1450,7 +1432,7 @@ impl<T: JrResponsePayload> JrRequestCxExt<T> for JrRequestCx<T> {
 pub trait JrResponseExt<T: JrResponsePayload> {
     fn forward_response_via(
         self,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         request_cx: JrRequestCx<T>,
     ) -> Result<(), sacp::Error>;
 }
@@ -1458,7 +1440,7 @@ pub trait JrResponseExt<T: JrResponsePayload> {
 impl<T: JrResponsePayload> JrResponseExt<T> for JrResponse<T> {
     fn forward_response_via(
         self,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         request_cx: JrRequestCx<T>,
     ) -> Result<(), sacp::Error> {
         let conductor_tx = conductor_tx.clone();
@@ -1497,8 +1479,8 @@ pub trait ConductorLink: JrLink + HasPeer<ClientPeer> {
         self,
         message: MessageCx,
         cx: JrConnectionCx<Self>,
-        conductor_tx: &mut mpsc::Sender<ConductorMessage>,
-    ) -> impl Future<Output = Result<Handled<MessageCx>, sacp::Error>> + Send;
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
+    ) -> Result<Handled<MessageCx>, sacp::Error>;
 }
 
 impl ConductorLink for ConductorToClient {
@@ -1548,21 +1530,17 @@ impl ConductorLink for ConductorToClient {
             ConductorToAgent::builder()
                 .name("conductor-to-agent")
                 // Intercept agent-to-client messages from the agent.
-                .on_receive_message(
-                    {
-                        let mut conductor_tx = responder.conductor_tx.clone();
-                        async move |message_cx: MessageCx, _cx| {
-                            conductor_tx
-                                .send(ConductorMessage::AgentToClient {
-                                    source_component_index: SourceComponentIndex::Successor,
-                                    message: message_cx,
-                                })
-                                .await
-                                .map_err(sacp::util::internal_error)
-                        }
-                    },
-                    sacp::on_receive_message!(),
-                )
+                .on_receive_message_sync({
+                    let conductor_tx = responder.conductor_tx.clone();
+                    move |message_cx: MessageCx, _cx| {
+                        conductor_tx
+                            .unbounded_send(ConductorMessage::AgentToClient {
+                                source_component_index: SourceComponentIndex::Successor,
+                                message: message_cx,
+                            })
+                            .map_err(sacp::util::internal_error)
+                    }
+                })
                 .connect_to(agent_component)?,
             |c| Box::pin(c.serve()),
         )?;
@@ -1577,11 +1555,11 @@ impl ConductorLink for ConductorToClient {
         ))
     }
 
-    async fn handle_message(
+    fn handle_message(
         self,
         message: MessageCx,
         cx: JrConnectionCx<Self>,
-        conductor_tx: &mut mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
     ) -> Result<Handled<MessageCx>, sacp::Error> {
         tracing::debug!(
             method = ?message.message().method(),
@@ -1589,14 +1567,13 @@ impl ConductorLink for ConductorToClient {
         );
         MatchMessageFrom::new(message, &cx)
             // Any incoming messages from the client are client-to-agent messages targeting the first component.
-            .if_message_from(ClientPeer, async move |message: MessageCx| {
+            .if_message_from_sync(ClientPeer, |message: MessageCx| {
                 tracing::debug!(
                     method = ?message.message().method(),
                     "ConductorToClient::handle_message - matched Client"
                 );
-                Conductor::<Self>::incoming_message_from_client(conductor_tx, message).await
+                Conductor::<Self>::incoming_message_from_client(conductor_tx, message)
             })
-            .await
             .done()
     }
 }
@@ -1655,40 +1632,36 @@ impl ConductorLink for ConductorToConductor {
         ))
     }
 
-    async fn handle_message(
+    fn handle_message(
         self,
         message: MessageCx,
         cx: JrConnectionCx<Self>,
-        conductor_tx: &mut mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
     ) -> Result<Handled<MessageCx>, sacp::Error> {
         tracing::debug!(
             method = ?message.message().method(),
             "ConductorToConductor::handle_message"
         );
         MatchMessageFrom::new(message, &cx)
-            .if_message_from(AgentPeer, {
+            .if_message_from_sync(AgentPeer, {
                 // Messages from our successor arrive already unwrapped
                 // (RemoteRoleStyle::Successor strips the SuccessorMessage envelope).
-                async |message: MessageCx| {
+                |message: MessageCx| {
                     tracing::debug!(
                         method = ?message.message().method(),
                         "ConductorToConductor::handle_message - matched Agent"
                     );
-                    let mut conductor_tx = conductor_tx.clone();
-                    Conductor::<Self>::incoming_message_from_agent(&mut conductor_tx, message).await
+                    Conductor::<Self>::incoming_message_from_agent(conductor_tx, message)
                 }
             })
-            .await
             // Any incoming messages from the client are client-to-agent messages targeting the first component.
-            .if_message_from(ClientPeer, async |message: MessageCx| {
+            .if_message_from_sync(ClientPeer, |message: MessageCx| {
                 tracing::debug!(
                     method = ?message.message().method(),
                     "ConductorToConductor::handle_message - matched Client"
                 );
-                let mut conductor_tx = conductor_tx.clone();
-                Conductor::<Self>::incoming_message_from_client(&mut conductor_tx, message).await
+                Conductor::<Self>::incoming_message_from_client(conductor_tx, message)
             })
-            .await
             .done()
     }
 }

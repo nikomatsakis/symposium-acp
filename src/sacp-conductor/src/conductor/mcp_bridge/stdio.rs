@@ -15,7 +15,7 @@ use super::{McpBridgeConnection, McpBridgeConnectionActor};
 pub async fn run_tcp_listener(
     tcp_listener: TcpListener,
     acp_url: String,
-    mut conductor_tx: mpsc::Sender<ConductorMessage>,
+    mut conductor_tx: mpsc::UnboundedSender<ConductorMessage>,
 ) -> Result<(), sacp::Error> {
     // Accept connections
     loop {
@@ -39,7 +39,7 @@ pub async fn run_tcp_listener(
 
 fn make_stdio_actor(
     stream: TcpStream,
-    conductor_tx: mpsc::Sender<ConductorMessage>,
+    conductor_tx: mpsc::UnboundedSender<ConductorMessage>,
     to_mcp_client_rx: mpsc::Receiver<MessageCx>,
 ) -> McpBridgeConnectionActor {
     let (read_half, write_half) = stream.into_split();

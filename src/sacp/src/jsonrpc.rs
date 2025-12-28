@@ -28,7 +28,10 @@ mod transport_actor;
 use crate::jsonrpc::dynamic_handler::DynamicHandlerMessage;
 pub use crate::jsonrpc::handlers::NullHandler;
 use crate::jsonrpc::handlers::{ChainedHandler, NamedHandler};
-use crate::jsonrpc::handlers::{MessageHandler, NotificationHandler, RequestHandler};
+use crate::jsonrpc::handlers::{
+    MessageHandlerAsync, MessageHandlerResponder, NotificationHandlerAsync,
+    NotificationHandlerResponder, RequestHandlerAsync, RequestHandlerResponder,
+};
 use crate::jsonrpc::handlers::{MessageHandlerSync, NotificationHandlerSync, RequestHandlerSync};
 use crate::jsonrpc::outgoing_actor::{OutgoingMessageTx, send_raw_message};
 use crate::jsonrpc::responder::SpawnedResponder;
@@ -664,27 +667,34 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
         self,
         op: F,
         to_future_hack: ToFut,
-    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, impl JrResponder<H::Link>>
     where
         H::Link: HasDefaultPeer,
         Req: JrRequest,
         Notif: JrNotification,
         F: AsyncFnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<(), crate::Error>
-            + Send,
+            + Send
+            + 'static,
         ToFut: Fn(
                 &mut F,
                 MessageCx<Req, Notif>,
                 JrConnectionCx<H::Link>,
             ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
-            + Sync,
+            + Sync
+            + 'static,
     {
-        self.with_handler(MessageHandler::new(
+        let (call_tx, call_rx) = mpsc::unbounded();
+        self.with_handler(MessageHandlerAsync::new(
             <H::Link as HasDefaultPeer>::DefaultPeer::default(),
             <H::Link>::default(),
-            op,
-            to_future_hack,
+            call_tx,
         ))
+        .with_responder(MessageHandlerResponder {
+            func: op,
+            call_rx,
+            to_future_hack,
+        })
     }
 
     /// Register a handler for JSON-RPC requests of type `Req`.
@@ -728,7 +738,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
         self,
         op: F,
         to_future_hack: ToFut,
-    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, impl JrResponder<H::Link>>
     where
         H::Link: HasDefaultPeer,
         F: AsyncFnMut(
@@ -736,7 +746,8 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
                 JrRequestCx<Req::Response>,
                 JrConnectionCx<H::Link>,
             ) -> Result<(), crate::Error>
-            + Send,
+            + Send
+            + 'static,
         ToFut: Fn(
                 &mut F,
                 Req,
@@ -744,14 +755,20 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
                 JrConnectionCx<H::Link>,
             ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
-            + Sync,
+            + Sync
+            + 'static,
     {
-        self.with_handler(RequestHandler::new(
+        let (call_tx, call_rx) = mpsc::unbounded();
+        self.with_handler(RequestHandlerAsync::new(
             <H::Link as HasDefaultPeer>::DefaultPeer::default(),
             <H::Link>::default(),
-            op,
-            to_future_hack,
+            call_tx,
         ))
+        .with_responder(RequestHandlerResponder {
+            func: op,
+            call_rx,
+            to_future_hack,
+        })
     }
 
     /// Register a handler for JSON-RPC notifications of type `Notif`.
@@ -794,25 +811,31 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
         self,
         op: F,
         to_future_hack: ToFut,
-    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, impl JrResponder<H::Link>>
     where
         H::Link: HasDefaultPeer,
         Notif: JrNotification,
-        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<(), crate::Error> + Send,
+        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<(), crate::Error> + Send + 'static,
         ToFut: Fn(
                 &mut F,
                 Notif,
                 JrConnectionCx<H::Link>,
             ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
-            + Sync,
+            + Sync
+            + 'static,
     {
-        self.with_handler(NotificationHandler::new(
+        let (call_tx, call_rx) = mpsc::unbounded();
+        self.with_handler(NotificationHandlerAsync::new(
             <H::Link as HasDefaultPeer>::DefaultPeer::default(),
             <H::Link>::default(),
-            op,
-            to_future_hack,
+            call_tx,
         ))
+        .with_responder(NotificationHandlerResponder {
+            func: op,
+            call_rx,
+            to_future_hack,
+        })
     }
 
     /// Register a handler for messages from a specific peer.
@@ -829,25 +852,32 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
         peer: Peer,
         op: F,
         to_future_hack: ToFut,
-    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, impl JrResponder<H::Link>>
     where
         H::Link: HasPeer<Peer>,
         F: AsyncFnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<(), crate::Error>
-            + Send,
+            + Send
+            + 'static,
         ToFut: Fn(
                 &mut F,
                 MessageCx<Req, Notif>,
                 JrConnectionCx<H::Link>,
             ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
-            + Sync,
+            + Sync
+            + 'static,
     {
-        self.with_handler(MessageHandler::new(
+        let (call_tx, call_rx) = mpsc::unbounded();
+        self.with_handler(MessageHandlerAsync::new(
             peer,
             <H::Link>::default(),
-            op,
-            to_future_hack,
+            call_tx,
         ))
+        .with_responder(MessageHandlerResponder {
+            func: op,
+            call_rx,
+            to_future_hack,
+        })
     }
 
     /// Register a handler for JSON-RPC requests from a specific peer.
@@ -877,7 +907,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
         peer: Peer,
         op: F,
         to_future_hack: ToFut,
-    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, impl JrResponder<H::Link>>
     where
         H::Link: HasPeer<Peer>,
         F: AsyncFnMut(
@@ -885,7 +915,8 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
                 JrRequestCx<Req::Response>,
                 JrConnectionCx<H::Link>,
             ) -> Result<(), crate::Error>
-            + Send,
+            + Send
+            + 'static,
         ToFut: Fn(
                 &mut F,
                 Req,
@@ -893,14 +924,20 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
                 JrConnectionCx<H::Link>,
             ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
-            + Sync,
+            + Sync
+            + 'static,
     {
-        self.with_handler(RequestHandler::new(
+        let (call_tx, call_rx) = mpsc::unbounded();
+        self.with_handler(RequestHandlerAsync::new(
             peer,
             <H::Link>::default(),
-            op,
-            to_future_hack,
+            call_tx,
         ))
+        .with_responder(RequestHandlerResponder {
+            func: op,
+            call_rx,
+            to_future_hack,
+        })
     }
 
     /// Register a handler for JSON-RPC notifications from a specific peer.
@@ -917,24 +954,30 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
         peer: Peer,
         op: F,
         to_future_hack: ToFut,
-    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
+    ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, impl JrResponder<H::Link>>
     where
         H::Link: HasPeer<Peer>,
-        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<(), crate::Error> + Send,
+        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<(), crate::Error> + Send + 'static,
         ToFut: Fn(
                 &mut F,
                 Notif,
                 JrConnectionCx<H::Link>,
             ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
-            + Sync,
+            + Sync
+            + 'static,
     {
-        self.with_handler(NotificationHandler::new(
+        let (call_tx, call_rx) = mpsc::unbounded();
+        self.with_handler(NotificationHandlerAsync::new(
             peer,
             <H::Link>::default(),
-            op,
-            to_future_hack,
+            call_tx,
         ))
+        .with_responder(NotificationHandlerResponder {
+            func: op,
+            call_rx,
+            to_future_hack,
+        })
     }
 
     // =========================================================================

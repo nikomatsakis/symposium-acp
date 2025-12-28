@@ -20,9 +20,9 @@ pub async fn run_arrow_proxy(
         // Intercept session notifications from successor (agent) and modify them.
         // Using on_receive_notification_from(Agent, ...) automatically unwraps
         // SuccessorMessage envelopes.
-        .on_receive_notification_from(
+        .on_receive_notification_from_sync(
             AgentPeer,
-            async |mut notification: SessionNotification, cx| {
+            |mut notification: SessionNotification, cx| {
                 // Modify the content by adding > prefix
                 match &mut notification.update {
                     SessionUpdate::AgentMessageChunk(ContentChunk { content, .. }) => {
@@ -40,7 +40,6 @@ pub async fn run_arrow_proxy(
                 cx.send_notification_to(ClientPeer, notification)?;
                 Ok(())
             },
-            sacp::on_receive_notification!(),
         )
         // Start serving
         .connect_to(transport)?

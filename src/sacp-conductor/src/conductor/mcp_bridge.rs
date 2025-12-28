@@ -62,7 +62,7 @@ impl McpBridgeListeners {
         &mut self,
         cx: JrConnectionCx<impl JrLink>,
         mcp_server: &mut McpServer,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         mcp_bridge_mode: &crate::McpBridgeMode,
     ) -> Result<(), sacp::Error> {
         use sacp::schema::McpServer;
@@ -99,7 +99,7 @@ impl McpBridgeListeners {
         cx: JrConnectionCx<impl JrLink>,
         server_name: &str,
         acp_url: &str,
-        conductor_tx: &mpsc::Sender<ConductorMessage>,
+        conductor_tx: &mpsc::UnboundedSender<ConductorMessage>,
         mcp_bridge_mode: &crate::McpBridgeMode,
     ) -> anyhow::Result<McpServer> {
         // If there is already a listener for the ACP URL, return its server
