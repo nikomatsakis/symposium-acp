@@ -102,25 +102,21 @@ impl RemoteStyle {
         }
     }
 
-    pub(crate) async fn handle_incoming_message<R: JrLink>(
+    /// Prepares an incoming message for handling by unwrapping SuccessorMessage if needed.
+    fn prepare_incoming_message(
         &self,
         message_cx: MessageCx,
-        connection_cx: JrConnectionCx<R>,
-        handle_message: impl AsyncFnOnce(
-            MessageCx,
-            JrConnectionCx<R>,
-        ) -> Result<Handled<MessageCx>, crate::Error>,
-    ) -> Result<Handled<MessageCx>, crate::Error> {
+    ) -> Result<PreparedIncomingMessage, crate::Error> {
         tracing::trace!(
             ?self,
             method = %message_cx.method(),
-            role = std::any::type_name::<R>(),
-            "handle_incoming_message: enter"
+            "prepare_incoming_message: enter"
         );
+
         match self {
             RemoteStyle::Counterpart => {
-                tracing::trace!("handle_incoming_message: Counterpart style, passing through");
-                return handle_message(message_cx, connection_cx).await;
+                tracing::trace!("prepare_incoming_message: Counterpart style, passing through");
+                return Ok(PreparedIncomingMessage::Passthrough(message_cx));
             }
             RemoteStyle::Successor => (),
         }
@@ -130,43 +126,110 @@ impl RemoteStyle {
             tracing::trace!(
                 method,
                 expected = METHOD_SUCCESSOR_MESSAGE,
-                "handle_incoming_message: Successor style but method doesn't match, returning Handled::No"
+                "prepare_incoming_message: Successor style but method doesn't match, declining"
             );
-            return Ok(Handled::No {
-                message: message_cx,
-                retry: false,
-            });
+            return Ok(PreparedIncomingMessage::Declined(message_cx));
         }
 
-        tracing::trace!("handle_incoming_message: Successor style, unwrapping SuccessorMessage");
-        // The outer message has method="_proxy/successor" and params containing the inner message.
-        // We need to deserialize the params (not the whole message) to extract the inner UntypedMessage.
+        tracing::trace!("prepare_incoming_message: Successor style, unwrapping SuccessorMessage");
         let SuccessorMessage { message, meta } = json_cast(message_cx.message().params())?;
         let successor_message_cx = message_cx.try_map_message(|_| Ok(message))?;
         tracing::trace!(
             unwrapped_method = %successor_message_cx.method(),
-            "handle_incoming_message: unwrapped to inner message"
+            "prepare_incoming_message: unwrapped to inner message"
         );
-        match handle_message(successor_message_cx, connection_cx).await? {
-            Handled::Yes => {
-                tracing::trace!("handle_incoming_message: inner handler returned Handled::Yes");
-                Ok(Handled::Yes)
-            }
 
-            Handled::No {
-                message: successor_message_cx,
-                retry,
-            } => {
-                tracing::trace!(
-                    "handle_incoming_message: inner handler returned Handled::No, re-wrapping"
-                );
-                Ok(Handled::No {
-                    message: successor_message_cx.try_map_message(|message| {
-                        SuccessorMessage { message, meta }.to_untyped_message()
-                    })?,
-                    retry,
-                })
+        Ok(PreparedIncomingMessage::Unwrapped {
+            message_cx: successor_message_cx,
+            meta,
+        })
+    }
+
+    /// Async version of incoming message handling - use when the callback is async.
+    pub(crate) async fn handle_incoming_message<R: JrLink>(
+        &self,
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<R>,
+        handle_message: impl AsyncFnOnce(
+            MessageCx,
+            JrConnectionCx<R>,
+        ) -> Result<Handled<MessageCx>, crate::Error>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
+        match self.prepare_incoming_message(message_cx)? {
+            PreparedIncomingMessage::Passthrough(message_cx) => {
+                handle_message(message_cx, connection_cx).await
             }
+            PreparedIncomingMessage::Unwrapped { message_cx, meta } => {
+                finish_incoming_message(handle_message(message_cx, connection_cx).await?, meta)
+            }
+            PreparedIncomingMessage::Declined(message_cx) => Ok(Handled::No {
+                message: message_cx,
+                retry: false,
+            }),
+        }
+    }
+
+    /// Sync version of incoming message handling - use when the callback is sync.
+    pub(crate) fn handle_incoming_message_sync<R: JrLink>(
+        &self,
+        message_cx: MessageCx,
+        connection_cx: JrConnectionCx<R>,
+        handle_message: impl FnOnce(
+            MessageCx,
+            JrConnectionCx<R>,
+        ) -> Result<Handled<MessageCx>, crate::Error>,
+    ) -> Result<Handled<MessageCx>, crate::Error> {
+        match self.prepare_incoming_message(message_cx)? {
+            PreparedIncomingMessage::Passthrough(message_cx) => {
+                handle_message(message_cx, connection_cx)
+            }
+            PreparedIncomingMessage::Unwrapped { message_cx, meta } => {
+                finish_incoming_message(handle_message(message_cx, connection_cx)?, meta)
+            }
+            PreparedIncomingMessage::Declined(message_cx) => Ok(Handled::No {
+                message: message_cx,
+                retry: false,
+            }),
+        }
+    }
+}
+
+/// Result of preparing an incoming message for handling.
+enum PreparedIncomingMessage {
+    /// Counterpart style: pass through unchanged
+    Passthrough(MessageCx),
+    /// Successor style: unwrapped from SuccessorMessage envelope
+    Unwrapped {
+        message_cx: MessageCx,
+        meta: Option<serde_json::Value>,
+    },
+    /// Message doesn't match expected pattern (e.g., wrong method for Successor style)
+    Declined(MessageCx),
+}
+
+/// Rewraps the handler result back into a SuccessorMessage if it wasn't handled.
+fn finish_incoming_message(
+    result: Handled<MessageCx>,
+    meta: Option<serde_json::Value>,
+) -> Result<Handled<MessageCx>, crate::Error> {
+    match result {
+        Handled::Yes => {
+            tracing::trace!("finish_incoming_message: inner handler returned Handled::Yes");
+            Ok(Handled::Yes)
+        }
+        Handled::No {
+            message: successor_message_cx,
+            retry,
+        } => {
+            tracing::trace!(
+                "finish_incoming_message: inner handler returned Handled::No, re-wrapping"
+            );
+            Ok(Handled::No {
+                message: successor_message_cx.try_map_message(|message| {
+                    SuccessorMessage { message, meta }.to_untyped_message()
+                })?,
+                retry,
+            })
         }
     }
 }

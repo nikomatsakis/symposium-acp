@@ -113,22 +113,7 @@ impl MatchMessage {
                         Some(Ok(typed_request)) => {
                             let typed_request_cx = untyped_request_cx.cast();
                             match op(typed_request, typed_request_cx).await {
-                                Ok(result) => match result.into_handled() {
-                                    Handled::Yes => Ok(Handled::Yes),
-                                    Handled::No {
-                                        message: (request, request_cx),
-                                        retry: request_retry,
-                                    } => match request.to_untyped_message() {
-                                        Ok(untyped) => Ok(Handled::No {
-                                            message: MessageCx::Request(
-                                                untyped,
-                                                request_cx.erase_to_json(),
-                                            ),
-                                            retry: retry | request_retry,
-                                        }),
-                                        Err(err) => Err(err),
-                                    },
-                                },
+                                Ok(result) => finish_request_handler(result, retry),
                                 Err(err) => Err(err),
                             }
                         }
@@ -171,19 +156,7 @@ impl MatchMessage {
                         untyped_notification.params(),
                     ) {
                         Some(Ok(typed_notification)) => match op(typed_notification).await {
-                            Ok(result) => match result.into_handled() {
-                                Handled::Yes => Ok(Handled::Yes),
-                                Handled::No {
-                                    message: notification,
-                                    retry: notification_retry,
-                                } => match notification.to_untyped_message() {
-                                    Ok(untyped) => Ok(Handled::No {
-                                        message: MessageCx::Notification(untyped),
-                                        retry: retry | notification_retry,
-                                    }),
-                                    Err(err) => Err(err),
-                                },
-                            },
+                            Ok(result) => finish_notification_handler(result, retry),
                             Err(err) => Err(err),
                         },
                         Some(Err(err)) => Err(err),
@@ -220,19 +193,7 @@ impl MatchMessage {
         {
             self.state = match message_cx.into_typed_message_cx::<R, N>() {
                 Ok(Ok(typed_message_cx)) => match op(typed_message_cx).await {
-                    Ok(result) => match result.into_handled() {
-                        Handled::Yes => Ok(Handled::Yes),
-                        Handled::No {
-                            message: typed_message_cx,
-                            retry: message_retry,
-                        } => match typed_message_cx.into_untyped_message_cx() {
-                            Ok(untyped) => Ok(Handled::No {
-                                message: untyped,
-                                retry: retry | message_retry,
-                            }),
-                            Err(err) => Err(err),
-                        },
-                    },
+                    Ok(result) => finish_message_handler(result, retry),
                     Err(err) => Err(err),
                 },
                 Ok(Err(message_cx)) => Ok(Handled::No {
@@ -268,6 +229,203 @@ impl MatchMessage {
             Ok(_) => Ok(()),
             Err(err) => Err(err),
         }
+    }
+
+    // ========================================================================
+    // Sync variants
+    // ========================================================================
+
+    /// Sync version of [`if_request`](Self::if_request).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_request_sync<Req: JrRequest, H>(
+        mut self,
+        op: impl FnOnce(Req, JrRequestCx<Req::Response>) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        H: crate::IntoHandled<(Req, JrRequestCx<Req::Response>)>,
+    {
+        if let Ok(Handled::No {
+            message: message_cx,
+            retry,
+        }) = self.state
+        {
+            self.state = match message_cx {
+                MessageCx::Request(untyped_request, untyped_request_cx) => {
+                    match Req::parse_message(untyped_request.method(), untyped_request.params()) {
+                        Some(Ok(typed_request)) => {
+                            let typed_request_cx = untyped_request_cx.cast();
+                            match op(typed_request, typed_request_cx) {
+                                Ok(result) => finish_request_handler(result, retry),
+                                Err(err) => Err(err),
+                            }
+                        }
+                        Some(Err(err)) => Err(err),
+                        None => Ok(Handled::No {
+                            message: MessageCx::Request(untyped_request, untyped_request_cx),
+                            retry,
+                        }),
+                    }
+                }
+                MessageCx::Notification(_) => Ok(Handled::No {
+                    message: message_cx,
+                    retry,
+                }),
+            };
+        }
+        self
+    }
+
+    /// Sync version of [`if_notification`](Self::if_notification).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_notification_sync<N: JrNotification, H>(
+        mut self,
+        op: impl FnOnce(N) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        H: crate::IntoHandled<N>,
+    {
+        if let Ok(Handled::No {
+            message: message_cx,
+            retry,
+        }) = self.state
+        {
+            self.state = match message_cx {
+                MessageCx::Notification(untyped_notification) => {
+                    match N::parse_message(
+                        untyped_notification.method(),
+                        untyped_notification.params(),
+                    ) {
+                        Some(Ok(typed_notification)) => match op(typed_notification) {
+                            Ok(result) => finish_notification_handler(result, retry),
+                            Err(err) => Err(err),
+                        },
+                        Some(Err(err)) => Err(err),
+                        None => Ok(Handled::No {
+                            message: MessageCx::Notification(untyped_notification),
+                            retry,
+                        }),
+                    }
+                }
+                MessageCx::Request(_, _) => Ok(Handled::No {
+                    message: message_cx,
+                    retry,
+                }),
+            };
+        }
+        self
+    }
+
+    /// Sync version of [`if_message`](Self::if_message).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_message_sync<R: JrRequest, N: JrNotification, H>(
+        mut self,
+        op: impl FnOnce(MessageCx<R, N>) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        H: crate::IntoHandled<MessageCx<R, N>>,
+    {
+        if let Ok(Handled::No {
+            message: message_cx,
+            retry,
+        }) = self.state
+        {
+            self.state = match message_cx.into_typed_message_cx::<R, N>() {
+                Ok(Ok(typed_message_cx)) => match op(typed_message_cx) {
+                    Ok(result) => finish_message_handler(result, retry),
+                    Err(err) => Err(err),
+                },
+                Ok(Err(message_cx)) => Ok(Handled::No {
+                    message: message_cx,
+                    retry,
+                }),
+                Err(err) => Err(err),
+            };
+        }
+        self
+    }
+
+    /// Sync version of [`otherwise`](Self::otherwise).
+    pub fn otherwise_sync(
+        self,
+        op: impl FnOnce(MessageCx) -> Result<(), crate::Error>,
+    ) -> Result<(), crate::Error> {
+        match self.state {
+            Ok(Handled::Yes) => Ok(()),
+            Ok(Handled::No { message, retry: _ }) => op(message),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+/// Helper to convert a request handler result back to untyped.
+fn finish_request_handler<Req: JrRequest, H>(
+    result: H,
+    outer_retry: bool,
+) -> Result<Handled<MessageCx>, crate::Error>
+where
+    H: crate::IntoHandled<(Req, JrRequestCx<Req::Response>)>,
+{
+    match result.into_handled() {
+        Handled::Yes => Ok(Handled::Yes),
+        Handled::No {
+            message: (request, request_cx),
+            retry: request_retry,
+        } => match request.to_untyped_message() {
+            Ok(untyped) => Ok(Handled::No {
+                message: MessageCx::Request(untyped, request_cx.erase_to_json()),
+                retry: outer_retry | request_retry,
+            }),
+            Err(err) => Err(err),
+        },
+    }
+}
+
+/// Helper to convert a notification handler result back to untyped.
+fn finish_notification_handler<N: JrNotification, H>(
+    result: H,
+    outer_retry: bool,
+) -> Result<Handled<MessageCx>, crate::Error>
+where
+    H: crate::IntoHandled<N>,
+{
+    match result.into_handled() {
+        Handled::Yes => Ok(Handled::Yes),
+        Handled::No {
+            message: notification,
+            retry: notification_retry,
+        } => match notification.to_untyped_message() {
+            Ok(untyped) => Ok(Handled::No {
+                message: MessageCx::Notification(untyped),
+                retry: outer_retry | notification_retry,
+            }),
+            Err(err) => Err(err),
+        },
+    }
+}
+
+/// Helper to convert a message handler result back to untyped.
+fn finish_message_handler<R: JrRequest, N: JrNotification, H>(
+    result: H,
+    outer_retry: bool,
+) -> Result<Handled<MessageCx>, crate::Error>
+where
+    H: crate::IntoHandled<MessageCx<R, N>>,
+{
+    match result.into_handled() {
+        Handled::Yes => Ok(Handled::Yes),
+        Handled::No {
+            message: typed_message_cx,
+            retry: message_retry,
+        } => match typed_message_cx.into_untyped_message_cx() {
+            Ok(untyped) => Ok(Handled::No {
+                message: untyped,
+                retry: outer_retry | message_retry,
+            }),
+            Err(err) => Err(err),
+        },
     }
 }
 
@@ -543,6 +701,127 @@ impl<Link: JrLink> MatchMessageFrom<Link> {
                     retry: inner_retry | outer_retry,
                 }),
             },
+        }
+    }
+
+    // ========================================================================
+    // Sync variants
+    // ========================================================================
+
+    /// Sync version of [`if_request`](Self::if_request).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_request_sync<Req: JrRequest, H>(
+        self,
+        op: impl FnOnce(Req, JrRequestCx<Req::Response>) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        Link: HasDefaultPeer,
+        H: crate::IntoHandled<(Req, JrRequestCx<Req::Response>)>,
+    {
+        self.if_request_from_sync(<Link::DefaultPeer>::default(), op)
+    }
+
+    /// Sync version of [`if_request_from`](Self::if_request_from).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_request_from_sync<Peer: JrPeer, Req: JrRequest, H>(
+        mut self,
+        peer: Peer,
+        op: impl FnOnce(Req, JrRequestCx<Req::Response>) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        Link: HasPeer<Peer>,
+        H: crate::IntoHandled<(Req, JrRequestCx<Req::Response>)>,
+    {
+        if let Ok(Handled::No { message, retry: _ }) = self.state {
+            let remote_style = Link::remote_style(peer);
+            self.state = remote_style.handle_incoming_message_sync(
+                message,
+                self.cx.clone(),
+                |message_cx, _connection_cx| {
+                    MatchMessage::new(message_cx).if_request_sync(op).done()
+                },
+            );
+        }
+        self
+    }
+
+    /// Sync version of [`if_notification`](Self::if_notification).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_notification_sync<N: JrNotification, H>(
+        self,
+        op: impl FnOnce(N) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        Link: HasDefaultPeer,
+        H: crate::IntoHandled<N>,
+    {
+        self.if_notification_from_sync(<Link as HasDefaultPeer>::DefaultPeer::default(), op)
+    }
+
+    /// Sync version of [`if_notification_from`](Self::if_notification_from).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_notification_from_sync<Peer: JrPeer, N: JrNotification, H>(
+        mut self,
+        peer: Peer,
+        op: impl FnOnce(N) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        Link: HasPeer<Peer>,
+        H: crate::IntoHandled<N>,
+    {
+        if let Ok(Handled::No { message, retry: _ }) = self.state {
+            let remote_style = Link::remote_style(peer);
+            self.state = remote_style.handle_incoming_message_sync(
+                message,
+                self.cx.clone(),
+                |message_cx, _connection_cx| {
+                    MatchMessage::new(message_cx)
+                        .if_notification_sync(op)
+                        .done()
+                },
+            );
+        }
+        self
+    }
+
+    /// Sync version of [`if_message_from`](Self::if_message_from).
+    ///
+    /// Use this when your handler is synchronous (e.g., just queues work to a channel).
+    pub fn if_message_from_sync<Peer: JrPeer, R: JrRequest, N: JrNotification, H>(
+        mut self,
+        peer: Peer,
+        op: impl FnOnce(MessageCx<R, N>) -> Result<H, crate::Error>,
+    ) -> Self
+    where
+        Link: HasPeer<Peer>,
+        H: crate::IntoHandled<MessageCx<R, N>>,
+    {
+        if let Ok(Handled::No { message, retry: _ }) = self.state {
+            let remote_style = Link::remote_style(peer);
+            self.state = remote_style.handle_incoming_message_sync(
+                message,
+                self.cx.clone(),
+                |message_cx, _connection_cx| {
+                    MatchMessage::new(message_cx).if_message_sync(op).done()
+                },
+            );
+        }
+        self
+    }
+
+    /// Sync version of [`otherwise`](Self::otherwise).
+    pub fn otherwise_sync(
+        self,
+        op: impl FnOnce(MessageCx) -> Result<(), crate::Error>,
+    ) -> Result<(), crate::Error> {
+        match self.state {
+            Ok(Handled::Yes) => Ok(()),
+            Ok(Handled::No { message, retry: _ }) => op(message),
+            Err(err) => Err(err),
         }
     }
 }
