@@ -152,17 +152,16 @@ async fn modify_message_en_route_inline() -> Result<(), sacp::Error> {
     impl Component<UntypedLink> for TestComponent {
         async fn serve(self, client: impl Component<UntypedLink>) -> Result<(), sacp::Error> {
             UntypedLink::builder()
-                .on_receive_request(
-                    async move |mut request: EchoRequestResponse,
-                                request_cx: JrRequestCx<EchoRequestResponse>,
-                                _connection_cx: JrConnectionCx<UntypedLink>| {
+                .on_receive_request_sync(
+                    |mut request: EchoRequestResponse,
+                     request_cx: JrRequestCx<EchoRequestResponse>,
+                     _connection_cx: JrConnectionCx<UntypedLink>| {
                         request.text.push("b".to_string());
                         Ok(Handled::No {
                             message: (request, request_cx),
                             retry: false,
                         })
                     },
-                    sacp::on_receive_request!(),
                 )
                 .with_handler(EchoHandler)
                 .serve(client)
@@ -212,17 +211,16 @@ async fn modify_message_and_stop() -> Result<(), sacp::Error> {
                     },
                     sacp::on_receive_request!(),
                 )
-                .on_receive_request(
-                    async move |mut request: EchoRequestResponse,
-                                request_cx: JrRequestCx<EchoRequestResponse>,
-                                _connection_cx: JrConnectionCx<UntypedLink>| {
+                .on_receive_request_sync(
+                    |mut request: EchoRequestResponse,
+                     request_cx: JrRequestCx<EchoRequestResponse>,
+                     _connection_cx: JrConnectionCx<UntypedLink>| {
                         request.text.push("b".to_string());
                         Ok(Handled::No {
                             message: (request, request_cx),
                             retry: false,
                         })
                     },
-                    sacp::on_receive_request!(),
                 )
                 .with_handler(EchoHandler)
                 .serve(client)

@@ -660,7 +660,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     /// For most use cases, prefer [`on_receive_request`](Self::on_receive_request) or
     /// [`on_receive_notification`](Self::on_receive_notification) which provide cleaner APIs
     /// for handling requests or notifications separately.
-    pub fn on_receive_message<Req, Notif, F, T, ToFut>(
+    pub fn on_receive_message<Req, Notif, F, ToFut>(
         self,
         op: F,
         to_future_hack: ToFut,
@@ -669,14 +669,13 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
         H::Link: HasDefaultPeer,
         Req: JrRequest,
         Notif: JrNotification,
-        F: AsyncFnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<T, crate::Error>
+        F: AsyncFnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<(), crate::Error>
             + Send,
-        T: IntoHandled<MessageCx<Req, Notif>>,
         ToFut: Fn(
                 &mut F,
                 MessageCx<Req, Notif>,
                 JrConnectionCx<H::Link>,
-            ) -> crate::BoxFuture<'_, Result<T, crate::Error>>
+            ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
             + Sync,
     {
@@ -725,7 +724,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     ///
     /// `Req` can be either a single request type or an enum of multiple request types.
     /// See the [type-driven dispatch](Self#type-driven-message-dispatch) section for details.
-    pub fn on_receive_request<Req: JrRequest, F, T, ToFut>(
+    pub fn on_receive_request<Req: JrRequest, F, ToFut>(
         self,
         op: F,
         to_future_hack: ToFut,
@@ -736,15 +735,14 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
                 Req,
                 JrRequestCx<Req::Response>,
                 JrConnectionCx<H::Link>,
-            ) -> Result<T, crate::Error>
+            ) -> Result<(), crate::Error>
             + Send,
-        T: IntoHandled<(Req, JrRequestCx<Req::Response>)>,
         ToFut: Fn(
                 &mut F,
                 Req,
                 JrRequestCx<Req::Response>,
                 JrConnectionCx<H::Link>,
-            ) -> crate::BoxFuture<'_, Result<T, crate::Error>>
+            ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
             + Sync,
     {
@@ -792,7 +790,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     ///
     /// `Notif` can be either a single notification type or an enum of multiple notification types.
     /// See the [type-driven dispatch](Self#type-driven-message-dispatch) section for details.
-    pub fn on_receive_notification<Notif, F, T, ToFut>(
+    pub fn on_receive_notification<Notif, F, ToFut>(
         self,
         op: F,
         to_future_hack: ToFut,
@@ -800,13 +798,12 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     where
         H::Link: HasDefaultPeer,
         Notif: JrNotification,
-        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<T, crate::Error> + Send,
-        T: IntoHandled<(Notif, JrConnectionCx<H::Link>)>,
+        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<(), crate::Error> + Send,
         ToFut: Fn(
                 &mut F,
                 Notif,
                 JrConnectionCx<H::Link>,
-            ) -> crate::BoxFuture<'_, Result<T, crate::Error>>
+            ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
             + Sync,
     {
@@ -827,14 +824,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     ///
     /// For the common case of receiving from the default counterpart, use
     /// [`on_receive_message`](Self::on_receive_message) instead.
-    pub fn on_receive_message_from<
-        Req: JrRequest,
-        Notif: JrNotification,
-        Peer: JrPeer,
-        F,
-        T,
-        ToFut,
-    >(
+    pub fn on_receive_message_from<Req: JrRequest, Notif: JrNotification, Peer: JrPeer, F, ToFut>(
         self,
         peer: Peer,
         op: F,
@@ -842,14 +832,13 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
     where
         H::Link: HasPeer<Peer>,
-        F: AsyncFnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<T, crate::Error>
+        F: AsyncFnMut(MessageCx<Req, Notif>, JrConnectionCx<H::Link>) -> Result<(), crate::Error>
             + Send,
-        T: IntoHandled<MessageCx<Req, Notif>>,
         ToFut: Fn(
                 &mut F,
                 MessageCx<Req, Notif>,
                 JrConnectionCx<H::Link>,
-            ) -> crate::BoxFuture<'_, Result<T, crate::Error>>
+            ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
             + Sync,
     {
@@ -883,7 +872,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     ///     request_cx.respond(InitializeResponse::make())
     /// })
     /// ```
-    pub fn on_receive_request_from<Req: JrRequest, Peer: JrPeer, F, T, ToFut>(
+    pub fn on_receive_request_from<Req: JrRequest, Peer: JrPeer, F, ToFut>(
         self,
         peer: Peer,
         op: F,
@@ -895,15 +884,14 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
                 Req,
                 JrRequestCx<Req::Response>,
                 JrConnectionCx<H::Link>,
-            ) -> Result<T, crate::Error>
+            ) -> Result<(), crate::Error>
             + Send,
-        T: IntoHandled<(Req, JrRequestCx<Req::Response>)>,
         ToFut: Fn(
                 &mut F,
                 Req,
                 JrRequestCx<Req::Response>,
                 JrConnectionCx<H::Link>,
-            ) -> crate::BoxFuture<'_, Result<T, crate::Error>>
+            ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
             + Sync,
     {
@@ -924,7 +912,7 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     ///
     /// For the common case of receiving from the default counterpart, use
     /// [`on_receive_notification`](Self::on_receive_notification) instead.
-    pub fn on_receive_notification_from<Notif: JrNotification, Peer: JrPeer, F, T, ToFut>(
+    pub fn on_receive_notification_from<Notif: JrNotification, Peer: JrPeer, F, ToFut>(
         self,
         peer: Peer,
         op: F,
@@ -932,13 +920,12 @@ impl<H: JrMessageHandler, R: JrResponder<H::Link>> JrConnectionBuilder<H, R> {
     ) -> JrConnectionBuilder<impl JrMessageHandler<Link = H::Link>, R>
     where
         H::Link: HasPeer<Peer>,
-        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<T, crate::Error> + Send,
-        T: IntoHandled<(Notif, JrConnectionCx<H::Link>)>,
+        F: AsyncFnMut(Notif, JrConnectionCx<H::Link>) -> Result<(), crate::Error> + Send,
         ToFut: Fn(
                 &mut F,
                 Notif,
                 JrConnectionCx<H::Link>,
-            ) -> crate::BoxFuture<'_, Result<T, crate::Error>>
+            ) -> crate::BoxFuture<'_, Result<(), crate::Error>>
             + Send
             + Sync,
     {
