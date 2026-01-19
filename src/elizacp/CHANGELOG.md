@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [11.0.1](https://github.com/symposium-dev/symposium-acp/compare/elizacp-v11.0.0...elizacp-v11.0.1) - 2026-01-19
+
+### Other
+
+- updated the following local packages: sacp, sacp-tokio
+
 ## [11.0.0](https://github.com/symposium-dev/symposium-acp/compare/elizacp-v10.0.0...elizacp-v11.0.0) - 2025-12-31
 
 ### Added
